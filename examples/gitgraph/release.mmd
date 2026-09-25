@@ -1,0 +1,28 @@
+---
+title: Release flow
+config:
+  gitGraph:
+    mainBranchName: main
+---
+gitGraph
+    commit id: "init"
+    commit id: "setup CI"
+    branch develop
+    checkout develop
+    commit id: "api"
+    branch feature/auth order: 3
+    checkout feature/auth
+    commit id: "login"
+    commit id: "oauth" type: HIGHLIGHT
+    checkout develop
+    merge feature/auth id: "merge auth"
+    branch hotfix order: 1
+    checkout main
+    commit id: "urgent" type: REVERSE
+    checkout develop
+    commit id: "tests"
+    checkout main
+    merge develop id: "release" tag: "v1.0.0"
+    checkout develop
+    cherry-pick id: "urgent"
+    commit id: "next"
