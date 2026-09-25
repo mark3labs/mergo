@@ -1,0 +1,35 @@
+sequenceDiagram
+    participant User as User Agent
+    participant Client as OAuth Client
+    participant AuthServer as Auth Server
+    participant ResourceServer as Resource Server
+
+    autonumber
+    
+    User->>+Client: Click login
+    Client->>+AuthServer: Redirect to login
+    AuthServer->>User: Show login form
+    User->>AuthServer: Enter credentials
+    AuthServer->>-Client: Redirect with auth code
+    Client->>Client: Store auth code
+    Client->>-User: Logged in
+    
+    Note over User,AuthServer: User is authenticated
+    
+    User->>Client: Request resource
+    activate Client
+    Client->>+AuthServer: POST /token (with code)
+    AuthServer-->>-Client: Access token
+    Client->>+ResourceServer: GET /profile (with token)
+    ResourceServer-->>-Client: User profile
+    Client-->>User: Display profile
+    deactivate Client
+    
+    par User actions
+        User->>Client: View history
+    and System check
+        Client->>ResourceServer: GET /history
+        ResourceServer-->>Client: History data
+    end
+    
+    Client-->>User: History displayed

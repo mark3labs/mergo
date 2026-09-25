@@ -213,7 +213,7 @@ func Render(src string, cfg *diagram.Config) (*scene.Scene, error) {
 
 func drawFace(sc *scene.Scene, x, y float64, score int, th *theme.Theme) {
 	radius := 8.0
-	faceColor := th.PaletteColor(4) // Use a distinct color for faces
+	faceColor := th.PaletteColor(score - 1) // Use score to select face color
 
 	// Draw face circle
 	facePath := scene.NewPath(scene.Style{
@@ -230,7 +230,7 @@ func drawFace(sc *scene.Scene, x, y float64, score int, th *theme.Theme) {
 
 	// Eyes
 	eyePath := scene.NewPath(scene.Style{
-		Fill:   color.RGBA{0, 0, 0, 255},
+		Fill:   theme.ContrastText(faceColor),
 		Stroke: color.RGBA{A: 0},
 	})
 	eyePath.Circle(x-radius/3, eyeY, 1.5)
@@ -239,7 +239,7 @@ func drawFace(sc *scene.Scene, x, y float64, score int, th *theme.Theme) {
 
 	// Mouth
 	mouthPath := scene.NewPath(scene.Style{
-		Stroke:      color.RGBA{0, 0, 0, 255},
+		Stroke:      theme.ContrastText(faceColor),
 		StrokeWidth: 1,
 	})
 

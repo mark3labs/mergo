@@ -133,3 +133,67 @@ func TestRenderGanttExample(t *testing.T) {
 		t.Error("Scene has no items")
 	}
 }
+
+func TestGanttWithMilestones(t *testing.T) {
+	// Test milestone positioning and rendering
+	src := `gantt
+    title Gantt with Milestones
+    dateFormat YYYY-MM-DD
+    section Plan
+        Milestone 1 :milestone, m1, 2024-01-15, 0d
+        Task :a1, 2024-01-01, 14d
+        Milestone 2 :milestone, m2, 2024-01-20, 0d
+`
+	cfg := &diagram.Config{Theme: theme.Default()}
+	sc, err := Render(src, cfg)
+	if err != nil {
+		t.Fatalf("Render failed: %v", err)
+	}
+	if sc.Width <= 0 || sc.Height <= 0 {
+		t.Errorf("Scene size invalid: %gx%g", sc.Width, sc.Height)
+	}
+}
+
+func TestGanttWithDifferentTaskTypes(t *testing.T) {
+	// Test different task states: done, active, crit
+	src := `gantt
+    title Task Types
+    dateFormat YYYY-MM-DD
+    section Work
+        Done Task :done, d1, 2024-01-01, 3d
+        Active Task :active, a1, 2024-01-04, 3d
+        Critical Task :crit, c1, 2024-01-07, 3d
+        Normal Task :n1, 2024-01-10, 3d
+`
+	cfg := &diagram.Config{Theme: theme.Default()}
+	sc, err := Render(src, cfg)
+	if err != nil {
+		t.Fatalf("Render failed: %v", err)
+	}
+	if len(sc.Items) == 0 {
+		t.Error("No items rendered")
+	}
+}
+
+func TestGanttParsingRobustness(t *testing.T) {
+	// Test parser doesn't panic on various prefixes
+	tests := []struct {
+		name string
+		src  string
+	}{
+		{"Just gantt", "gantt"},
+		{"With title", "gantt\ntitle Test"},
+		{"With section", "gantt\nsection S1"},
+		{"Empty lines", "gantt\n\n\ntitle Test\n\n"},
+	}
+
+	cfg := &diagram.Config{Theme: theme.Default()}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := Render(tt.src, cfg)
+			if err != nil {
+				t.Fatalf("Render failed: %v", err)
+			}
+		})
+	}
+}

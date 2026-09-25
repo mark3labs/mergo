@@ -191,3 +191,44 @@ func TestBranchOperations(t *testing.T) {
 		t.Errorf("CurrentBranch = %q, want %q", g.CurrentBranch, "develop")
 	}
 }
+
+func TestGitGraphCherryPick(t *testing.T) {
+	src := `commit id: "A"
+  commit id: "B"
+  branch feature
+  commit id: "C"
+  checkout main
+  cherry-pick id: "C" parent: "B"`
+
+	th := theme.Default()
+	sc, err := Render(src, &diagram.Config{Theme: th})
+	if err != nil {
+		t.Fatalf("Render failed: %v", err)
+	}
+	if sc == nil {
+		t.Fatal("scene is nil")
+	}
+}
+
+func TestGitGraphMultipleBranches(t *testing.T) {
+	src := `commit id: "1"
+  branch feature1
+  commit id: "2"
+  checkout main
+  branch feature2
+  commit id: "3"
+  checkout feature1
+  commit id: "4"
+  checkout main
+  merge feature1
+  merge feature2`
+
+	th := theme.Default()
+	sc, err := Render(src, &diagram.Config{Theme: th})
+	if err != nil {
+		t.Fatalf("Render failed: %v", err)
+	}
+	if len(sc.Items) == 0 {
+		t.Error("No items rendered")
+	}
+}

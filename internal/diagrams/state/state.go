@@ -3,6 +3,7 @@ package state
 
 import (
 	"fmt"
+	"maps"
 	"math"
 	"regexp"
 	"strings"
@@ -31,31 +32,37 @@ func Render(src string, cfg *diagram.Config) (*scene.Scene, error) {
 }
 
 type parser struct {
-	cfg       *diagram.Config
-	th        *theme.Theme
-	states    map[string]*stateInfo
-	start     string
-	end       string
-	relations []*transitionInfo
-	notes     []*noteInfo
-	direction layout.Direction
+	cfg            *diagram.Config
+	th             *theme.Theme
+	states         map[string]*stateInfo
+	topLevel       []*stateInfo // top-level state order
+	startState     *stateInfo   // [*] at top level
+	endState       *stateInfo   // [*] end at top level
+	relations      []*transitionInfo
+	notes          []*noteInfo
+	styleClassDefs map[string]map[string]string
+	direction      layout.Direction
+	lineno         int
 }
 
 type stateInfo struct {
-	id                string
-	description       string
-	children          []*stateInfo // for composite states
-	isComposite       bool
-	isStart           bool
-	isEnd             bool
-	isChoice          bool
-	isFork            bool
-	isJoin            bool
-	childDirection    *layout.Direction
-	startState        *stateInfo // [*] within this composite
-	endState          *stateInfo // [*] end marker
-	concurrentRegions []int      // indices of regions separated by --
-	styles            map[string]string
+	id             string
+	description    string
+	children       []*stateInfo // for composite states
+	isComposite    bool
+	isStart        bool
+	isEnd          bool
+	isChoice       bool
+	isFork         bool
+	isJoin         bool
+	childDirection *layout.Direction // direction inside this composite
+	startState     *stateInfo        // [*] within this composite
+	endState       *stateInfo        // [*] end within this composite
+	concurrencyIdx int               // region index for concurrency (0 = no concurrency)
+	styles         map[string]string
+	absorbNode     *layout.Node
+	parent         *stateInfo
+	isInternal     bool // created as part of composite parsing
 }
 
 type transitionInfo struct {
@@ -75,10 +82,11 @@ func newParser(cfg *diagram.Config) *parser {
 		th = theme.Default()
 	}
 	p := &parser{
-		cfg:       cfg,
-		th:        th,
-		states:    make(map[string]*stateInfo),
-		direction: layout.TB,
+		cfg:            cfg,
+		th:             th,
+		states:         make(map[string]*stateInfo),
+		styleClassDefs: make(map[string]map[string]string),
+		direction:      layout.TB,
 	}
 	p.direction = layout.ParseDirection(cfg.String("state", "direction", "TB"))
 	return p
@@ -88,6 +96,7 @@ func (p *parser) parse(src string) error {
 	lines := diagram.Lines(src)
 
 	for i := 0; i < len(lines); i++ {
+		p.lineno = i + 1
 		line := lines[i]
 
 		// Direction statement
@@ -99,13 +108,47 @@ func (p *parser) parse(src string) error {
 			continue
 		}
 
-		// Skip styling and config directives
-		if strings.HasPrefix(line, "classDef") || strings.HasPrefix(line, "class ") ||
-			strings.HasPrefix(line, "style ") || strings.HasPrefix(line, "hide ") {
+		// Hide empty description
+		if strings.HasPrefix(line, "hide empty description") {
 			continue
 		}
 
-		// State declaration with description
+		// Comments
+		if strings.HasPrefix(line, "%%") {
+			continue
+		}
+
+		// classDef
+		if strings.HasPrefix(line, "classDef") {
+			p.parseClassDef(line)
+			continue
+		}
+
+		// class (cssClass)
+		if strings.HasPrefix(line, "class ") {
+			p.parseCssClass(line)
+			continue
+		}
+
+		// style
+		if strings.HasPrefix(line, "style ") {
+			p.parseStyle(line)
+			continue
+		}
+
+		// State with composite block
+		if strings.HasPrefix(line, "state ") && strings.Contains(line, "{") {
+			si, err := p.parseCompositeState(line, lines, &i)
+			if err != nil {
+				return fmt.Errorf("line %d: %w", p.lineno, err)
+			}
+			if si != nil {
+				p.topLevel = append(p.topLevel, si)
+			}
+			continue
+		}
+
+		// state "description" as id
 		if strings.HasPrefix(line, "state ") && strings.Contains(line, " as ") {
 			parts := strings.SplitN(line, " as ", 2)
 			if len(parts) == 2 {
@@ -113,52 +156,78 @@ func (p *parser) parse(src string) error {
 				id := strings.TrimSpace(parts[1])
 				stateDecl = diagram.CleanLabel(stateDecl)
 				if _, ok := p.states[id]; !ok {
-					p.states[id] = &stateInfo{
+					si := &stateInfo{
 						id:          id,
 						description: stateDecl,
 						styles:      make(map[string]string),
 					}
+					p.states[id] = si
+					p.topLevel = append(p.topLevel, si)
 				}
 			}
 			continue
 		}
 
-		// State with block (composite state)
-		if strings.HasPrefix(line, "state ") && strings.Contains(line, "{") {
-			if err := p.parseCompositeState(line, lines, &i); err != nil {
-				return fmt.Errorf("line %d: %w", i+1, err)
-			}
-			continue
-		}
-
-		// Simple state declaration
+		// state id : description
 		if after, ok := strings.CutPrefix(line, "state "); ok {
-			id := strings.TrimSpace(after)
-			id = diagram.CleanLabel(id)
-			if _, ok := p.states[id]; !ok {
-				p.states[id] = &stateInfo{
-					id:     id,
-					styles: make(map[string]string),
+			after := after
+			after = strings.TrimSpace(after)
+			id := after
+
+			// Handle annotations
+			if strings.Contains(id, "<<") && strings.Contains(id, ">>") {
+				endAnn := strings.Index(id, ">>")
+				annPart := id[:endAnn+2]
+				id = strings.TrimSpace(id[endAnn+2:])
+
+				si, ok := p.states[id]
+				if !ok {
+					si = &stateInfo{
+						id:     id,
+						styles: make(map[string]string),
+					}
+					p.states[id] = si
+					p.topLevel = append(p.topLevel, si)
+				}
+
+				// Parse annotation
+				if strings.Contains(annPart, "<<choice>>") {
+					si.isChoice = true
+				} else if strings.Contains(annPart, "<<fork>>") {
+					si.isFork = true
+				} else if strings.Contains(annPart, "<<join>>") {
+					si.isJoin = true
+				}
+			} else {
+				if _, ok := p.states[id]; !ok {
+					si := &stateInfo{
+						id:     id,
+						styles: make(map[string]string),
+					}
+					p.states[id] = si
+					p.topLevel = append(p.topLevel, si)
 				}
 			}
 			continue
 		}
 
-		// State description (id : description)
-		if strings.Contains(line, " : ") && !strings.Contains(line, "--") {
+		// id : description
+		if strings.Contains(line, " : ") && !strings.Contains(line, "-->") {
 			parts := strings.SplitN(line, " : ", 2)
 			if len(parts) == 2 {
 				id := strings.TrimSpace(parts[0])
 				desc := strings.TrimSpace(parts[1])
 				desc = diagram.CleanLabel(desc)
-				if _, ok := p.states[id]; !ok {
-					p.states[id] = &stateInfo{
+				if si, ok := p.states[id]; ok {
+					si.description = desc
+				} else {
+					si := &stateInfo{
 						id:          id,
 						description: desc,
 						styles:      make(map[string]string),
 					}
-				} else {
-					p.states[id].description = desc
+					p.states[id] = si
+					p.topLevel = append(p.topLevel, si)
 				}
 			}
 			continue
@@ -176,50 +245,17 @@ func (p *parser) parse(src string) error {
 			continue
 		}
 
-		// Special markers: <<choice>>, <<fork>>, <<join>>
+		// Special state markers
 		if strings.Contains(line, "<<choice>>") {
-			id := regexp.MustCompile(`(\w+)\s+<<choice>>`).FindStringSubmatch(line)
-			if len(id) > 1 {
-				if _, ok := p.states[id[1]]; !ok {
-					p.states[id[1]] = &stateInfo{
-						id:       id[1],
-						isChoice: true,
-						styles:   make(map[string]string),
-					}
-				} else {
-					p.states[id[1]].isChoice = true
-				}
-			}
+			p.parseSpecialMarker(line, "choice")
 			continue
 		}
 		if strings.Contains(line, "<<fork>>") {
-			id := regexp.MustCompile(`(\w+)\s+<<fork>>`).FindStringSubmatch(line)
-			if len(id) > 1 {
-				if _, ok := p.states[id[1]]; !ok {
-					p.states[id[1]] = &stateInfo{
-						id:     id[1],
-						isFork: true,
-						styles: make(map[string]string),
-					}
-				} else {
-					p.states[id[1]].isFork = true
-				}
-			}
+			p.parseSpecialMarker(line, "fork")
 			continue
 		}
 		if strings.Contains(line, "<<join>>") {
-			id := regexp.MustCompile(`(\w+)\s+<<join>>`).FindStringSubmatch(line)
-			if len(id) > 1 {
-				if _, ok := p.states[id[1]]; !ok {
-					p.states[id[1]] = &stateInfo{
-						id:     id[1],
-						isJoin: true,
-						styles: make(map[string]string),
-					}
-				} else {
-					p.states[id[1]].isJoin = true
-				}
-			}
+			p.parseSpecialMarker(line, "join")
 			continue
 		}
 	}
@@ -227,25 +263,115 @@ func (p *parser) parse(src string) error {
 	return nil
 }
 
-func (p *parser) parseCompositeState(line string, lines []string, idx *int) error {
-	// state Name { ... }
+func (p *parser) parseClassDef(line string) {
+	line = strings.TrimPrefix(line, "classDef")
+	line = strings.TrimSpace(line)
+
+	spaceIdx := strings.IndexAny(line, " \t")
+	if spaceIdx <= 0 {
+		return
+	}
+
+	name := line[:spaceIdx]
+	styleStr := strings.TrimSpace(line[spaceIdx:])
+
+	styles := parseStyleString(styleStr)
+	p.styleClassDefs[name] = styles
+}
+
+func (p *parser) parseCssClass(line string) {
+	line = strings.TrimPrefix(line, "class ")
+	line = strings.TrimSpace(line)
+
+	// cssClass "A,B" name or cssClass A,B name
+	var classList, styleName string
+
+	if strings.HasPrefix(line, "\"") {
+		endQuote := strings.Index(line[1:], "\"")
+		if endQuote > 0 {
+			classList = line[1 : endQuote+1]
+			rest := strings.TrimSpace(line[endQuote+2:])
+			styleName = rest
+		}
+	} else {
+		spaceIdx := strings.IndexAny(line, " \t")
+		if spaceIdx > 0 {
+			classList = line[:spaceIdx]
+			styleName = strings.TrimSpace(line[spaceIdx:])
+		}
+	}
+
+	if classList == "" || styleName == "" {
+		return
+	}
+
+	states := strings.SplitSeq(classList, ",")
+	for stateID := range states {
+		stateID = strings.TrimSpace(stateID)
+		if si, ok := p.states[stateID]; ok {
+			if styleDef, ok := p.styleClassDefs[styleName]; ok {
+				maps.Copy(si.styles, styleDef)
+			}
+		}
+	}
+}
+
+func (p *parser) parseStyle(line string) {
+	line = strings.TrimPrefix(line, "style ")
+	line = strings.TrimSpace(line)
+
+	spaceIdx := strings.IndexAny(line, " \t")
+	if spaceIdx <= 0 {
+		return
+	}
+
+	stateID := line[:spaceIdx]
+	styleStr := strings.TrimSpace(line[spaceIdx:])
+
+	si, ok := p.states[stateID]
+	if !ok {
+		si = &stateInfo{
+			id:     stateID,
+			styles: make(map[string]string),
+		}
+		p.states[stateID] = si
+	}
+
+	styles := parseStyleString(styleStr)
+	maps.Copy(si.styles, styles)
+}
+
+func parseStyleString(s string) map[string]string {
+	styles := make(map[string]string)
+	pairs := strings.SplitSeq(s, ",")
+	for pair := range pairs {
+		if idx := strings.Index(pair, ":"); idx > 0 {
+			key := strings.TrimSpace(pair[:idx])
+			val := strings.TrimSpace(pair[idx+1:])
+			styles[key] = val
+		}
+	}
+	return styles
+}
+
+func (p *parser) parseCompositeState(line string, lines []string, idx *int) (*stateInfo, error) {
+	// state Name { ... } or state "Description" as Name { ... }
 	before, _, ok := strings.Cut(line, "{")
 	if !ok {
-		return fmt.Errorf("missing {")
+		return nil, fmt.Errorf("missing {")
 	}
 
 	stateDecl := strings.TrimPrefix(before, "state ")
 	stateDecl = strings.TrimSpace(stateDecl)
-	id := stateDecl
-	desc := ""
+	var id, desc string
 
-	// Handle "name" as "id"
+	// Handle "desc" as id
 	if strings.Contains(stateDecl, " as ") {
 		parts := strings.SplitN(stateDecl, " as ", 2)
 		desc = diagram.CleanLabel(strings.TrimSpace(parts[0]))
 		id = strings.TrimSpace(parts[1])
-	} else if strings.HasPrefix(stateDecl, `"`) && strings.Contains(stateDecl, `"`) {
-		endQuote := strings.LastIndex(stateDecl, `"`)
+	} else if strings.HasPrefix(stateDecl, "\"") && strings.Contains(stateDecl, "\"") {
+		endQuote := strings.LastIndex(stateDecl, "\"")
 		desc = stateDecl[1:endQuote]
 		rest := strings.TrimSpace(stateDecl[endQuote+1:])
 		if strings.HasPrefix(rest, "as ") {
@@ -254,6 +380,12 @@ func (p *parser) parseCompositeState(line string, lines []string, idx *int) erro
 			id = desc
 		}
 		desc = diagram.CleanLabel(desc)
+	} else {
+		id = stateDecl
+	}
+
+	if id == "" {
+		id = "composite_" + fmt.Sprintf("%d", *idx)
 	}
 
 	si := &stateInfo{
@@ -263,31 +395,98 @@ func (p *parser) parseCompositeState(line string, lines []string, idx *int) erro
 		styles:      make(map[string]string),
 	}
 
-	// Parse contents
+	var children []*stateInfo
+	var concurrencyRegions []int
+
+	// Parse composite contents
 	for *idx++; *idx < len(lines); *idx++ {
-		memberLine := strings.TrimSpace(lines[*idx])
-		if memberLine == "" {
+		content := strings.TrimSpace(lines[*idx])
+
+		if content == "" || strings.HasPrefix(content, "%%") {
 			continue
 		}
-		if memberLine == "}" {
+
+		if content == "}" {
 			break
 		}
 
-		// Nested state or transition within composite
-		if strings.HasPrefix(memberLine, "state ") || strings.Contains(memberLine, "-->") ||
-			strings.Contains(memberLine, " : ") {
-			// Would need recursive parsing here; for now, simplified
+		// Concurrency separator
+		if content == "--" {
+			concurrencyRegions = append(concurrencyRegions, len(children))
+			continue
 		}
 
-		// Concurrency separator
-		if memberLine == "--" {
-			si.concurrentRegions = append(si.concurrentRegions, len(si.children))
+		// State declarations within composite
+		if strings.HasPrefix(content, "state ") && strings.Contains(content, "{") {
+			childSi, err := p.parseCompositeState(content, lines, idx)
+			if err != nil {
+				return nil, err
+			}
+			if childSi != nil {
+				childSi.parent = si
+				childSi.isInternal = true
+				children = append(children, childSi)
+				p.states[childSi.id] = childSi
+			}
 			continue
+		}
+
+		if after, ok0 := strings.CutPrefix(content, "state "); ok0 {
+			childID := strings.TrimSpace(after)
+			if childID != "" && childID != "[*]" {
+				if _, ok := p.states[childID]; !ok {
+					childSi := &stateInfo{
+						id:         childID,
+						styles:     make(map[string]string),
+						parent:     si,
+						isInternal: true,
+					}
+					p.states[childID] = childSi
+					children = append(children, childSi)
+				}
+			}
+			continue
+		}
+
+		// [*] start/end within composite
+		if strings.HasPrefix(content, "[*]") {
+			startState := &stateInfo{
+				id:         fmt.Sprintf("%s__start__", id),
+				isStart:    true,
+				parent:     si,
+				isInternal: true,
+				styles:     make(map[string]string),
+			}
+			si.startState = startState
+			p.states[startState.id] = startState
+			children = append(children, startState)
+			continue
+		}
+
+		// Transitions within composite (simplified parsing)
+		if strings.Contains(content, "-->") {
+			p.parseTransition(content)
+			continue
+		}
+
+		// Simple state ID
+		if content != "" && !strings.HasPrefix(content, "[*]") {
+			if _, ok := p.states[content]; !ok {
+				childSi := &stateInfo{
+					id:         content,
+					styles:     make(map[string]string),
+					parent:     si,
+					isInternal: true,
+				}
+				p.states[content] = childSi
+				children = append(children, childSi)
+			}
 		}
 	}
 
+	si.children = children
 	p.states[id] = si
-	return nil
+	return si, nil
 }
 
 func (p *parser) parseTransition(line string) {
@@ -318,6 +517,9 @@ func (p *parser) parseTransition(line string) {
 				isStart: true,
 				styles:  make(map[string]string),
 			}
+			if p.startState == nil {
+				p.startState = p.states[from]
+			}
 		}
 	} else if _, ok := p.states[from]; !ok {
 		p.states[from] = &stateInfo{
@@ -333,6 +535,9 @@ func (p *parser) parseTransition(line string) {
 				id:     to,
 				isEnd:  true,
 				styles: make(map[string]string),
+			}
+			if p.endState == nil {
+				p.endState = p.states[to]
 			}
 		}
 	} else if _, ok := p.states[to]; !ok {
@@ -352,7 +557,7 @@ func (p *parser) parseTransition(line string) {
 func (p *parser) parseNote(line string) {
 	// note left of State : text
 	// note right of State : text
-	// note for State : text
+	// note "text" (free note)
 
 	pattern := regexp.MustCompile(`note\s+(left|right)\s+of\s+(\w+)\s*:\s*(.*)`)
 	match := pattern.FindStringSubmatch(line)
@@ -362,6 +567,40 @@ func (p *parser) parseNote(line string) {
 			forState: match[2],
 			text:     diagram.CleanLabel(match[3]),
 		})
+	}
+}
+
+func (p *parser) parseSpecialMarker(line string, markerType string) {
+	// state_id <<choice>>
+	pattern := regexp.MustCompile(`(\w+)\s+<<` + markerType + `>>`)
+	match := pattern.FindStringSubmatch(line)
+	if len(match) > 1 {
+		stateID := match[1]
+		if si, ok := p.states[stateID]; ok {
+			switch markerType {
+			case "choice":
+				si.isChoice = true
+			case "fork":
+				si.isFork = true
+			case "join":
+				si.isJoin = true
+			}
+		} else {
+			si := &stateInfo{
+				id:     stateID,
+				styles: make(map[string]string),
+			}
+			switch markerType {
+			case "choice":
+				si.isChoice = true
+			case "fork":
+				si.isFork = true
+			case "join":
+				si.isJoin = true
+			}
+			p.states[stateID] = si
+			p.topLevel = append(p.topLevel, si)
+		}
 	}
 }
 
@@ -375,9 +614,14 @@ func (p *parser) render() (*scene.Scene, error) {
 		RankSep: p.cfg.Float("state", "rankSpacing", 50),
 	}
 
-	// Create nodes for each state
+	// Create nodes
 	nodeMap := make(map[string]*layout.Node)
 	for id, si := range p.states {
+		// Skip internal states (they're handled via clusters)
+		if si.isInternal && si.parent != nil && si.parent.isComposite {
+			continue
+		}
+
 		w, h := p.measureState(si)
 		n := &layout.Node{
 			ID:   id,
@@ -385,7 +629,16 @@ func (p *parser) render() (*scene.Scene, error) {
 			H:    h,
 			Data: si,
 		}
-		n.Clip = layout.ClipRect
+
+		// Set appropriate clip function
+		if si.isChoice {
+			n.Clip = layout.ClipDiamond
+		} else if si.isStart || si.isEnd {
+			n.Clip = layout.ClipEllipse
+		} else {
+			n.Clip = layout.ClipRect
+		}
+
 		nodeMap[id] = n
 		g.Nodes = append(g.Nodes, n)
 	}
@@ -397,6 +650,7 @@ func (p *parser) render() (*scene.Scene, error) {
 		if from == nil || to == nil {
 			continue
 		}
+
 		e := &layout.Edge{From: from, To: to}
 		if rel.label != "" {
 			labelW, labelH := scene.MeasureBlock(rel.label, diagram.Font(p.th, 1), 1.25)
@@ -406,11 +660,14 @@ func (p *parser) render() (*scene.Scene, error) {
 		g.Edges = append(g.Edges, e)
 	}
 
-	// Run layout
 	layout.Layout(g)
 
 	// Draw states
 	for id, si := range p.states {
+		if si.isInternal && si.parent != nil {
+			continue
+		}
+
 		n := nodeMap[id]
 		if n != nil {
 			p.drawState(sc, si, n.X, n.Y, n.W, n.H)
@@ -423,7 +680,14 @@ func (p *parser) render() (*scene.Scene, error) {
 			continue
 		}
 		e := g.Edges[i]
-		p.drawTransition(sc, rel, e)
+		if e.From != nil && e.To != nil {
+			p.drawTransition(sc, rel, e)
+		}
+	}
+
+	// Draw notes
+	for _, note := range p.notes {
+		p.drawNote(sc, note)
 	}
 
 	return diagram.Finish(sc, p.th, ""), nil
@@ -434,9 +698,9 @@ func (p *parser) measureState(si *stateInfo) (float64, float64) {
 	lineH := fs * 1.25
 	minW := 80.0
 
-	// Measure text
+	// Special shapes
 	if si.isStart || si.isEnd {
-		// Small circles
+		// Circle
 		return 20, 20
 	}
 
@@ -446,12 +710,12 @@ func (p *parser) measureState(si *stateInfo) (float64, float64) {
 	}
 
 	if si.isFork || si.isJoin {
-		// Bar
+		// Horizontal bar
 		return 60, 12
 	}
 
 	// Regular state
-	h := lineH + 8 // padding
+	h := lineH + 8
 	w := minW
 
 	if si.description != "" {
@@ -481,7 +745,7 @@ func (p *parser) drawState(sc *scene.Scene, si *stateInfo, cx, cy, w, h float64)
 	}
 
 	if si.isEnd {
-		// Bullseye circle (filled circle with unfilled ring)
+		// Bullseye circle
 		sc.Add(scene.NewPath(scene.Style{
 			Fill:        p.th.Background,
 			Stroke:      p.th.LineColor,
@@ -523,30 +787,57 @@ func (p *parser) drawState(sc *scene.Scene, si *stateInfo, cx, cy, w, h float64)
 	x := cx - w/2
 	y := cy - h/2
 
-	sc.Add(scene.NewPath(scene.Style{
-		Fill:   p.th.PrimaryColor,
-		Stroke: p.th.PrimaryBorderColor,
+	// Apply style overrides
+	fillColor := p.th.PrimaryColor
+	strokeColor := p.th.PrimaryBorderColor
+	textColor := p.th.PrimaryTextColor
+
+	if fillStr, ok := si.styles["fill"]; ok {
+		if c, err := theme.ParseColor(fillStr); err == nil {
+			fillColor = c
+		}
+	}
+	if strokeStr, ok := si.styles["stroke"]; ok {
+		if c, err := theme.ParseColor(strokeStr); err == nil {
+			strokeColor = c
+		}
+	}
+	if colorStr, ok := si.styles["color"]; ok {
+		if c, err := theme.ParseColor(colorStr); err == nil {
+			textColor = c
+		}
+	}
+
+	boxStyle := scene.Style{
+		Fill:   fillColor,
+		Stroke: strokeColor,
 		Shadow: true,
-	}).Rect(x, y, w, h, 8))
+	}
+
+	sc.Add(scene.NewPath(boxStyle).Rect(x, y, w, h, 5))
 
 	curY := y + 6
 
 	// State name
 	nameFont := diagram.Font(p.th, 1)
-	sc.Add(scene.NewText(cx, curY, si.id, nameFont, p.th.PrimaryTextColor,
+	if fontWeightStr, ok := si.styles["font-weight"]; ok && strings.Contains(fontWeightStr, "bold") {
+		nameFont = diagram.BoldFont(p.th, 1)
+	}
+
+	sc.Add(scene.NewText(cx, curY, si.id, nameFont, textColor,
 		scene.AnchorMiddle, scene.VAlignTop))
 	curY += lineH
 
 	// Description (if present)
 	if si.description != "" {
 		// Separator line
-		sep := scene.NewPath(scene.Style{Stroke: p.th.PrimaryBorderColor, StrokeWidth: 1})
+		sep := scene.NewPath(scene.Style{Stroke: strokeColor, StrokeWidth: 1})
 		sep.MoveTo(x+4, curY).LineTo(x+w-4, curY)
 		sc.Add(sep)
 		curY += 4
 
 		descFont := diagram.Font(p.th, 0.9)
-		sc.Add(scene.NewText(cx, curY, si.description, descFont, p.th.PrimaryTextColor,
+		sc.Add(scene.NewText(cx, curY, si.description, descFont, textColor,
 			scene.AnchorMiddle, scene.VAlignTop))
 	}
 }
@@ -573,4 +864,32 @@ func (p *parser) drawTransition(sc *scene.Scene, trans *transitionInfo, e *layou
 		sc.Add(scene.NewText(e.Label.X, e.Label.Y, trans.label, labelFont, p.th.TextColor,
 			scene.AnchorMiddle, scene.VAlignMiddle))
 	}
+}
+
+func (p *parser) drawNote(sc *scene.Scene, note *noteInfo) {
+	fs := p.th.FontSize
+	lineH := fs * 1.25
+
+	noteFont := diagram.Font(p.th, 0.9)
+	noteW := scene.MeasureText(note.text, noteFont) + 12
+	noteH := lineH + 8
+
+	noteStyle := scene.Style{
+		Fill:   p.th.NoteBkg,
+		Stroke: p.th.NoteBorder,
+	}
+
+	// Position notes loosely
+	noteX := 100.0
+	noteY := 100.0
+
+	if note.position == "left" {
+		noteX -= noteW + 20
+	} else {
+		noteX += 20
+	}
+
+	sc.Add(scene.NewPath(noteStyle).Rect(noteX, noteY, noteW, noteH, 3))
+	sc.Add(scene.NewText(noteX+6, noteY+4, note.text, noteFont, p.th.NoteText,
+		scene.AnchorStart, scene.VAlignTop))
 }

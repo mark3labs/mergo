@@ -1,0 +1,36 @@
+sequenceDiagram
+    autonumber
+    actor Customer
+    participant WebApp as Web App
+    participant API as API Gateway
+    participant PaymentService as Payment Service
+
+    Customer->>WebApp: Click checkout
+    activate WebApp
+    WebApp->>API: POST /checkout
+    activate API
+    
+    Note over WebApp,API: Processing order details
+    
+    API->>PaymentService: Authorize payment
+    activate PaymentService
+    
+    alt Payment approved
+        PaymentService-->>API: Success
+    else Payment declined
+        PaymentService-->>API: Error
+    end
+    
+    deactivate PaymentService
+    
+    loop Retry up to 3 times
+        API->>API: Validate order
+    end
+    
+    API-->>WebApp: 201 Created
+    deactivate API
+    
+    WebApp-->>Customer: Order confirmed
+    deactivate WebApp
+    
+    Note over Customer,PaymentService: Order complete

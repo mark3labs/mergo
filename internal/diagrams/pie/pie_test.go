@@ -131,3 +131,50 @@ func TestRenderPieWithTitle(t *testing.T) {
 		t.Errorf("scene dimensions invalid: %fx%f", sc.Width, sc.Height)
 	}
 }
+
+func TestRenderPieEmptyOrAllZeros(t *testing.T) {
+	// All zero values should result in empty chart
+	src := `pie
+	"A" : 0
+	"B" : 0
+	`
+	cfg := &diagram.Config{Theme: theme.Default()}
+	sc, err := Render(src, cfg)
+	if err != nil {
+		t.Fatalf("render error: %v", err)
+	}
+	if sc == nil {
+		t.Fatal("scene is nil")
+	}
+}
+
+func TestRenderPieSingleSlice(t *testing.T) {
+	// Single slice pie (full circle)
+	src := `pie
+	"Entire" : 100
+	`
+	cfg := &diagram.Config{Theme: theme.Default()}
+	sc, err := Render(src, cfg)
+	if err != nil {
+		t.Fatalf("render error: %v", err)
+	}
+	if sc.Width <= 0 || sc.Height <= 0 {
+		t.Errorf("scene dimensions invalid: %fx%f", sc.Width, sc.Height)
+	}
+}
+
+func TestRenderPieVerySmallSlice(t *testing.T) {
+	// Test with one very small slice
+	src := `pie
+	"Large" : 99.9
+	"Tiny" : 0.1
+	`
+	cfg := &diagram.Config{Theme: theme.Default()}
+	sc, err := Render(src, cfg)
+	if err != nil {
+		t.Fatalf("render error: %v", err)
+	}
+	if sc.Width <= 0 || sc.Height <= 0 {
+		t.Errorf("scene dimensions invalid: %fx%f", sc.Width, sc.Height)
+	}
+}

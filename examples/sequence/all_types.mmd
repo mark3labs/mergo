@@ -1,0 +1,25 @@
+sequenceDiagram
+    participant A@{"type": "boundary"} as API Boundary
+    participant B@{"type": "control"} as Controller
+    participant C@{"type": "entity"} as Entity
+    participant D@{"type": "database"} as Database
+    participant E@{"type": "queue"} as Message Queue
+    participant F@{"type": "collections"} as Collection
+
+    autonumber
+
+    A->>+B: HTTP Request
+    B->>+C: Create entity
+    C->>+D: Save to DB
+    D-->>-C: Persisted
+    C-->>-B: Entity ID
+    
+    B->>+E: Publish event
+    E-->>-B: Queued
+    
+    B->>+F: Add to collection
+    F-->>-B: Added
+    
+    B-->>-A: HTTP 201 Created
+    
+    Note over A,F: All participant types demonstrated

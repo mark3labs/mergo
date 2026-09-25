@@ -1,13 +1,44 @@
 ---
-title: Document Workflow
+title: Document Workflow with Composite States
 ---
 stateDiagram-v2
-[*] --> Draft
-Draft : Editing document
-Draft --> Submitted : submit
-Submitted : Under review
-Submitted --> Review
-Review : Reviewer examining
-Review --> Published : approved
-Review --> Draft : rejected
-Published --> [*]
+    direction TB
+
+    [*] --> Draft
+
+    state Draft {
+        [*] --> Editing
+        Editing --> Reviewing : submit for review
+        Reviewing --> Editing : request changes
+        Reviewing --> [*]
+    }
+
+    state Review {
+        [*] --> QA
+        QA --> ApprovalPending : QA passed
+        ApprovalPending --> Rejected : issues found
+        ApprovalPending --> [*]
+    }
+
+    Draft --> Review : ready for review
+
+    Review --> Published : approved
+    Review --> Draft : needs revision
+
+    state Published {
+        [*] --> Active
+        Active --> Archived : end of life
+        Archived --> [*]
+    }
+
+    Published --> [*]
+
+    note right of Draft
+        User can edit and save
+        document freely
+    end note
+
+    note right of Review
+        Documents go through QA
+        and approval process
+    end note

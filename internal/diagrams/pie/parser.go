@@ -107,8 +107,8 @@ func (p *Parser) parseHeader(line string) {
 	}
 
 	// Extract title if present
-	if strings.HasPrefix(line, "title") {
-		line = strings.TrimPrefix(line, "title")
+	if after, ok := strings.CutPrefix(line, "title"); ok {
+		line = after
 		line = strings.TrimSpace(line)
 		p.doc.Title = strings.Trim(line, "\"'")
 	}
@@ -129,7 +129,7 @@ func (p *Parser) parseClassDef(line string) {
 	styleDef := parts[2]
 
 	cd := ClassDef{}
-	for _, style := range strings.Split(styleDef, ",") {
+	for style := range strings.SplitSeq(styleDef, ",") {
 		kv := strings.SplitN(strings.TrimSpace(style), ":", 2)
 		if len(kv) != 2 {
 			continue

@@ -166,3 +166,54 @@ func TestRenderQuadrantWithLabels(t *testing.T) {
 		t.Errorf("scene dimensions invalid: %fx%f", sc.Width, sc.Height)
 	}
 }
+
+func TestParsePointsAtBoundaries(t *testing.T) {
+	// Test points at the boundaries (0 and 1)
+	src := `quadrantChart
+	A: [0.0, 0.0]
+	B: [1.0, 1.0]
+	C: [0.5, 0.5]
+	`
+	doc, err := Parse(src)
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+	if len(doc.Points) != 3 {
+		t.Errorf("expected 3 points, got %d", len(doc.Points))
+	}
+}
+
+func TestParsePointsCloseToCenter(t *testing.T) {
+	// Test multiple points close together (for overlap detection)
+	src := `quadrantChart
+	A: [0.49, 0.49]
+	B: [0.51, 0.51]
+	C: [0.50, 0.50]
+	`
+	doc, err := Parse(src)
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+	if len(doc.Points) != 3 {
+		t.Errorf("expected 3 points, got %d", len(doc.Points))
+	}
+}
+
+func TestRenderManyPoints(t *testing.T) {
+	// Test rendering with many close points
+	src := `quadrantChart
+	P1: [0.1, 0.1]
+	P2: [0.15, 0.15]
+	P3: [0.12, 0.18]
+	P4: [0.2, 0.1]
+	P5: [0.9, 0.9]
+	`
+	cfg := &diagram.Config{Theme: theme.Default()}
+	sc, err := Render(src, cfg)
+	if err != nil {
+		t.Fatalf("render error: %v", err)
+	}
+	if sc.Width <= 0 || sc.Height <= 0 {
+		t.Errorf("scene dimensions invalid: %fx%f", sc.Width, sc.Height)
+	}
+}

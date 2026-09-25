@@ -1,0 +1,25 @@
+sequenceDiagram
+    actor Alice
+    participant Bob as Bob Johnson
+    actor Charlie as Charlie<br/>Brown
+    
+    autonumber
+    
+    Alice->>Bob: Hello Bob!
+    Note right of Bob: Bob is thinking
+    Bob->>Charlie: Have you met Alice?
+    Note over Alice,Charlie: Everyone is talking
+    
+    rect rgb(191, 223, 255)
+        Alice->>Bob: How are you?
+        Bob-->>Alice: Great!
+    end
+    
+    loop Check status every hour
+        Charlie->>Bob: Status check
+        Bob-->>Charlie: All good
+    end
+    
+    opt Extra response
+        Bob-->>Alice: Thanks for asking!
+    end

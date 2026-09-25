@@ -294,9 +294,8 @@ func layoutGitGraph(g *GitGraph) {
 	for i, name := range branchOrder {
 		branch := g.Branches[name]
 		branch.X = float64(i) * branchGap
-		branch.Color = branch.getColor(i)
-		branch.TextColor = branch.getTextColor(i)
 	}
+	// Colors will be set during rendering with theme
 
 	// Assign y positions to commits
 	commitHeight := 40.0
@@ -307,22 +306,13 @@ func layoutGitGraph(g *GitGraph) {
 	}
 }
 
-func (b *Branch) getColor(index int) color.RGBA {
-	// Return a color based on branch index
-	colors := []color.RGBA{
-		{0, 150, 136, 255},
-		{63, 81, 181, 255},
-		{233, 30, 99, 255},
-		{255, 87, 34, 255},
-		{76, 175, 80, 255},
-		{255, 193, 7, 255},
-	}
-	return colors[index%len(colors)]
+func (b *Branch) getColor(index int, th *theme.Theme) color.RGBA {
+	// Return a color from theme palette based on branch index
+	return th.PaletteColor(index)
 }
 
-func (b *Branch) getTextColor(index int) color.RGBA {
-	_ = index
-	return color.RGBA{255, 255, 255, 255}
+func (b *Branch) getTextColor(index int, th *theme.Theme) color.RGBA {
+	return th.PaletteTextColor(index)
 }
 
 func renderGitGraph(sc *scene.Scene, g *GitGraph, th *theme.Theme) {
@@ -330,6 +320,24 @@ func renderGitGraph(sc *scene.Scene, g *GitGraph, th *theme.Theme) {
 	maxY := float64(0)
 	if len(g.CommitOrder) > 0 {
 		maxY = g.CommitOrder[len(g.CommitOrder)-1].Y + 40
+	}
+
+	// Set branch colors during rendering
+	branchOrder := make([]string, 0, len(g.Branches))
+	for name := range g.Branches {
+		branchOrder = append(branchOrder, name)
+	}
+	for i := 0; i < len(branchOrder)-1; i++ {
+		for j := i + 1; j < len(branchOrder); j++ {
+			if g.Branches[branchOrder[i]].Order > g.Branches[branchOrder[j]].Order {
+				branchOrder[i], branchOrder[j] = branchOrder[j], branchOrder[i]
+			}
+		}
+	}
+	for i, name := range branchOrder {
+		branch := g.Branches[name]
+		branch.Color = branch.getColor(i, th)
+		branch.TextColor = branch.getTextColor(i, th)
 	}
 
 	for _, branch := range g.Branches {
@@ -374,7 +382,7 @@ func renderCommit(sc *scene.Scene, c *Commit, b *Branch, g *GitGraph, th *theme.
 	case "REVERSE":
 		// Circle with cross
 		circle := scene.NewPath(scene.Style{
-			Fill:        color.RGBA{255, 255, 255, 255},
+			Fill:        th.Background,
 			Stroke:      b.Color,
 			StrokeWidth: 2,
 		})
@@ -414,6 +422,34 @@ func renderCommit(sc *scene.Scene, c *Commit, b *Branch, g *GitGraph, th *theme.
 		label := scene.NewText(x, labelY, c.ID, labelF, th.TextColor, scene.AnchorMiddle, scene.VAlignMiddle)
 		label.Rotate = labelRotate
 		sc.Add(label)
+	}
+
+	// Draw merge connector if this is a merge commit
+	if c.Type == "NORMAL" && len(g.Branches[c.Branch].Commits) > 1 {
+		// Check if we came from another branch
+		idx := -1
+		for i, commit := range g.Branches[c.Branch].Commits {
+			if commit.ID == c.ID {
+				idx = i
+				break
+			}
+		}
+		if idx > 0 {
+			prevCommit := g.Branches[c.Branch].Commits[idx-1]
+			if prevCommit.X != c.X {
+				// Draw a curve from previous position to current branch line
+				connector := scene.NewPath(scene.Style{
+					Stroke:      b.Color,
+					StrokeWidth: 1,
+					Dash:        []float64{2, 2},
+				})
+				midX := (prevCommit.X + c.X) / 2
+				_ = (prevCommit.Y + c.Y) / 2 // midY would be used for arc adjustment
+				connector.MoveTo(prevCommit.X, prevCommit.Y)
+				connector.CubicTo(midX, prevCommit.Y, midX, c.Y, c.X, c.Y)
+				sc.Add(connector)
+			}
+		}
 	}
 
 	// Draw tag label if present

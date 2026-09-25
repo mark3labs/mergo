@@ -99,23 +99,23 @@ func (p *Parser) parse() (*Document, error) {
 			continue
 		}
 
-		if strings.HasPrefix(line, "quadrant-1") {
-			p.doc.Quadrant1 = strings.TrimSpace(strings.TrimPrefix(line, "quadrant-1"))
+		if after, ok := strings.CutPrefix(line, "quadrant-1"); ok {
+			p.doc.Quadrant1 = strings.TrimSpace(after)
 			continue
 		}
 
-		if strings.HasPrefix(line, "quadrant-2") {
-			p.doc.Quadrant2 = strings.TrimSpace(strings.TrimPrefix(line, "quadrant-2"))
+		if after, ok := strings.CutPrefix(line, "quadrant-2"); ok {
+			p.doc.Quadrant2 = strings.TrimSpace(after)
 			continue
 		}
 
-		if strings.HasPrefix(line, "quadrant-3") {
-			p.doc.Quadrant3 = strings.TrimSpace(strings.TrimPrefix(line, "quadrant-3"))
+		if after, ok := strings.CutPrefix(line, "quadrant-3"); ok {
+			p.doc.Quadrant3 = strings.TrimSpace(after)
 			continue
 		}
 
-		if strings.HasPrefix(line, "quadrant-4") {
-			p.doc.Quadrant4 = strings.TrimSpace(strings.TrimPrefix(line, "quadrant-4"))
+		if after, ok := strings.CutPrefix(line, "quadrant-4"); ok {
+			p.doc.Quadrant4 = strings.TrimSpace(after)
 			continue
 		}
 
@@ -180,7 +180,7 @@ func (p *Parser) parseClassDef(line string) {
 	styleDef := parts[2]
 
 	cd := ClassDef{}
-	for _, style := range strings.Split(styleDef, ",") {
+	for style := range strings.SplitSeq(styleDef, ",") {
 		kv := strings.SplitN(strings.TrimSpace(style), ":", 2)
 		if len(kv) != 2 {
 			continue
@@ -207,13 +207,13 @@ func (p *Parser) parsePoint(line string) bool {
 	// or with class: Name: [x, y]:::className
 
 	// Find colon separator
-	colonIdx := strings.Index(line, ":")
-	if colonIdx < 0 {
+	before, after, ok := strings.Cut(line, ":")
+	if !ok {
 		return false
 	}
 
-	name := strings.TrimSpace(line[:colonIdx])
-	rest := strings.TrimSpace(line[colonIdx+1:])
+	name := strings.TrimSpace(before)
+	rest := strings.TrimSpace(after)
 
 	// Extract class if present
 	var className string
@@ -273,8 +273,8 @@ func (p *Parser) parsePoint(line string) bool {
 func (p *Parser) parsePointStyle(pt *Point, styling string) {
 	// Parse key: value pairs
 	// E.g., ", radius: 10, color: #ff3300"
-	parts := strings.Split(styling, ",")
-	for _, part := range parts {
+	parts := strings.SplitSeq(styling, ",")
+	for part := range parts {
 		kv := strings.SplitN(strings.TrimSpace(part), ":", 2)
 		if len(kv) != 2 {
 			continue

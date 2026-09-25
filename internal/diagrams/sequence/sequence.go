@@ -3,6 +3,7 @@ package sequence
 import (
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/mark3labs/mergo/internal/diagram"
@@ -29,27 +30,38 @@ func Render(src string, cfg *diagram.Config) (*scene.Scene, error) {
 	}
 
 	renderer := newRenderer(d, sc, th, cfg)
-	renderer.render()
+	if err := renderer.render(); err != nil {
+		return nil, err
+	}
 
 	return diagram.Finish(sc, th, cfg.Title), nil
 }
 
-// Diagram holds the parsed sequence diagram AST.
+// ============================================================================
+// AST Types
+// ============================================================================
+
+// Diagram is the parsed AST for a sequence diagram.
 type Diagram struct {
-	participants []*Participant
-	messages     []Message
-	autonumber   *Autonumber
-	title        string
-	boxes        []*Box
+	Title        string
+	Participants []*Participant
+	Messages     []Statement
+	Autonumber   *Autonumber
+	Boxes        []*BoxDef
+	Config       map[string]any
 }
 
-// Participant in a sequence diagram.
+// Participant represents an actor or participant in the sequence.
 type Participant struct {
-	ID      string
-	Display string // what to show (may include newlines)
-	Type    ParticipantType
-	Order   int // order of declaration
-	Box     *Box
+	ID           string          // unique identifier (used in messages)
+	Alias        string          // display name (what's shown in the diagram)
+	Type         ParticipantType // actor, boundary, control, entity, database, queue, collections, or default
+	LineNo       int             // line number for error reporting
+	Box          *BoxDef         // if part of a box grouping
+	createMsg    *Message        // if created via create statement (node appears at message y)
+	destroyMsg   *Message        // if destroyed (lifeline ends with X)
+	createLineY  float64         // y position where creation message was
+	destroyLineY float64         // y position where destruction happens
 }
 
 // ParticipantType determines the visual symbol.
@@ -66,18 +78,83 @@ const (
 	TypeCollections
 )
 
+// Statement is the base interface for all statements in a diagram.
+type Statement interface {
+	isStatement()
+}
+
 // Message is a communication between participants.
 type Message struct {
-	FromID     string // participant ID
-	ToID       string // participant ID
-	From       *Participant
-	To         *Participant
-	Label      string
-	Arrow      ArrowType
-	LineNo     int
-	ActivateOn string // "+" for activate recipient, "-" for deactivate
-	SelfLoop   bool
+	FromID       string
+	ToID         string
+	From         *Participant
+	To           *Participant
+	Label        string
+	Arrow        ArrowType
+	LineNo       int
+	ActivateFrom string // "+" for activate from sender, "" for none
+	ActivateTo   string // "+" or "-" for activate/deactivate recipient
+	IsSelfLoop   bool
+	HasCentral   bool // central lifeline connection via ()
+	FromCentral  bool // message originates from central point
+	ToCentral    bool // message ends at central point
 }
+
+func (m *Message) isStatement() {}
+
+// Note is a note attached to participant(s) or spanning multiple participants.
+type Note struct {
+	Position NotePosition // left, right, over
+	For      []*Participant
+	Text     string
+	LineNo   int
+}
+
+func (n *Note) isStatement() {}
+
+// NotePosition indicates where a note is positioned relative to participants.
+type NotePosition int
+
+const (
+	NoteRight NotePosition = iota
+	NoteLeft
+	NoteOver
+)
+
+// Block is a control structure (loop, alt, opt, par, critical, break, rect).
+type Block struct {
+	Kind     BlockKind
+	Label    string
+	Cond     string // condition text for frames (e.g., "[condition]")
+	Children []Statement
+	Clauses  []*BlockClause // for alt/par/critical (else/and/option)
+	Color    string         // for rect backgrounds (rgb/rgba)
+	Nested   bool           // whether this block is nested inside another
+	LineNo   int
+	Spans    []*Participant // participants touched by contents
+}
+
+func (b *Block) isStatement() {}
+
+// BlockClause represents an alternative or parallel branch in a block.
+type BlockClause struct {
+	Kind     string // "else", "and", "option"
+	Cond     string // condition text
+	Children []Statement
+}
+
+// BlockKind is the type of control block.
+type BlockKind int
+
+const (
+	BlockLoop BlockKind = iota
+	BlockAlt
+	BlockOpt
+	BlockPar
+	BlockCritical
+	BlockBreak
+	BlockRect
+)
 
 // ArrowType determines arrow style and markers.
 type ArrowType int
@@ -99,165 +176,256 @@ const (
 type Autonumber struct {
 	Start     float64
 	Increment float64
+	Active    bool
 }
 
-// Box groups participants.
-type Box struct {
+// BoxDef groups participants visually.
+type BoxDef struct {
 	Title        string
 	Color        string
 	Participants []*Participant
+	LineNo       int
 }
 
-// Parser parses sequence diagram source.
+// ============================================================================
+// Parser
+// ============================================================================
+
 type Parser struct {
-	src   string
-	lines []string
-	pos   int
+	src    string
+	lines  []string
+	pos    int
+	lineNo int // actual line number (for error reporting)
 }
 
 func newParser(src string) *Parser {
-	var lines []string
-	for l := range strings.SplitSeq(src, "\n") {
-		if l = strings.TrimSpace(l); l != "" {
-			lines = append(lines, l)
-		}
-	}
+	lines := strings.Split(src, "\n")
 	return &Parser{src: src, lines: lines}
 }
 
 func (p *Parser) parse() (*Diagram, error) {
 	d := &Diagram{
-		participants: []*Participant{},
-		messages:     []Message{},
+		Participants: []*Participant{},
+		Messages:     []Statement{},
+		Config:       map[string]any{},
 	}
 
 	for p.pos = 0; p.pos < len(p.lines); p.pos++ {
-		line := p.lines[p.pos]
+		p.lineNo = p.pos + 1
+		line := strings.TrimSpace(p.lines[p.pos])
 
-		// Skip first line (sequenceDiagram header)
+		// Skip header
 		if strings.HasPrefix(strings.ToLower(line), "sequencediagram") {
 			continue
 		}
 
+		// Skip empty lines and comments
+		if line == "" || strings.HasPrefix(line, "%%") {
+			continue
+		}
+
 		if err := p.parseLine(line, d); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("line %d: %w", p.lineNo, err)
 		}
 	}
 
 	// Fill in implicit participants and validate
 	d.collectImplicitParticipants()
-	if err := d.validateAndNormalize(); err != nil {
-		return nil, err
-	}
 
 	return d, nil
 }
 
 func (p *Parser) parseLine(line string, d *Diagram) error {
 	switch {
+	case strings.HasPrefix(line, "title "):
+		d.Title = diagram.CleanLabel(line[6:])
+		return nil
+
 	case strings.HasPrefix(line, "participant "):
-		return p.parseParticipant(line, d, false)
+		return p.parseParticipant(line[12:], d, false)
+
 	case strings.HasPrefix(line, "actor "):
-		return p.parseParticipant(line, d, true)
+		return p.parseParticipant(line[6:], d, true)
+
 	case strings.HasPrefix(line, "autonumber"):
 		return p.parseAutonumber(line, d)
-	case strings.HasPrefix(line, "title "):
-		d.title = parseStringArg(line[6:])
-		return nil
-	case strings.HasPrefix(line, "Note "):
-		// Ignore notes for now - would need full parsing
-		return nil
-	case strings.HasPrefix(line, "loop "), strings.HasPrefix(line, "alt "),
-		strings.HasPrefix(line, "opt "), strings.HasPrefix(line, "par "),
-		strings.HasPrefix(line, "critical "), strings.HasPrefix(line, "break "),
-		strings.HasPrefix(line, "rect "):
-		// Ignore control frames for now - would need nesting
-		return nil
-	case strings.HasPrefix(line, "end"):
-		// Ignore frame ending
-		return nil
-	case strings.HasPrefix(line, "activate "):
-		// Ignore for now - handle via arrow syntax
-		return nil
-	case strings.HasPrefix(line, "deactivate "):
-		// Ignore for now - handle via arrow syntax
-		return nil
-	case strings.HasPrefix(line, "destroy "):
-		// Ignore destroy directives for now
-		return nil
+
 	case strings.HasPrefix(line, "create "):
-		// Ignore create directives for now
-		return nil
+		return p.parseCreate(line[7:], d)
+
+	case strings.HasPrefix(line, "destroy "):
+		return p.parseDestroy(line[8:], d)
+
+	case strings.HasPrefix(line, "activate "):
+		return p.parseActivate(line[9:], d)
+
+	case strings.HasPrefix(line, "deactivate "):
+		return p.parseDeactivate(line[11:], d)
+
+	case strings.HasPrefix(line, "Note "):
+		return p.parseNote(line, d)
+
+	case strings.HasPrefix(line, "loop "):
+		return p.parseBlock(line, d, BlockLoop)
+
+	case strings.HasPrefix(line, "alt "):
+		return p.parseBlock(line, d, BlockAlt)
+
+	case strings.HasPrefix(line, "opt "):
+		return p.parseBlock(line, d, BlockOpt)
+
+	case strings.HasPrefix(line, "par "):
+		return p.parseBlock(line, d, BlockPar)
+
+	case strings.HasPrefix(line, "critical "):
+		return p.parseBlock(line, d, BlockCritical)
+
+	case strings.HasPrefix(line, "break "):
+		return p.parseBlock(line, d, BlockBreak)
+
+	case strings.HasPrefix(line, "rect "):
+		return p.parseRect(line, d)
+
 	case strings.HasPrefix(line, "box "):
 		return p.parseBox(line, d)
+
+	case strings.HasPrefix(line, "else"):
+		// Ignore else outside of blocks
+		return nil
+
+	case strings.HasPrefix(line, "and"):
+		// Ignore and outside of blocks
+		return nil
+
+	case strings.HasPrefix(line, "option"):
+		// Ignore option outside of blocks
+		return nil
+
+	case strings.HasPrefix(line, "end"):
+		// Ignore standalone end
+		return nil
+
 	case strings.HasPrefix(line, "link "), strings.HasPrefix(line, "links "),
 		strings.HasPrefix(line, "properties "):
-		// Ignore these
+		// Ignore these non-critical features
 		return nil
+
 	default:
-		// Try to parse as message - has arrow
-		return p.parseMessage(line, d)
+		// Try to parse as message
+		if msg, err := p.parseMessage(line); err == nil && msg != nil {
+			d.Messages = append(d.Messages, msg)
+		}
+		return nil
 	}
 }
 
-func (p *Parser) parseParticipant(line string, d *Diagram, isActor bool) error {
-	// Format: participant [ID] [as Display] [@{ "type": "..." }]
-	keyword := "participant"
-	if isActor {
-		keyword = "actor"
+// extractJSONField extracts a field value from a JSON-like string with unquoted keys.
+// e.g., "type: database" or "type: \"database\""
+func extractJSONField(jsonStr, fieldName string) string {
+	// Look for fieldName:
+	pattern := fieldName + ":"
+	_, after, ok := strings.Cut(jsonStr, pattern)
+	if !ok {
+		return ""
 	}
 
-	rest := line[len(keyword):]
-	rest = strings.TrimSpace(rest)
+	rest := strings.TrimSpace(after)
 
-	// Parse optional JSON config
-	var ptype ParticipantType = TypeParticipant
+	// Extract value until comma, brace, or end
+	var value string
+	var inQuote bool
+	for i, ch := range rest {
+		if ch == '"' {
+			inQuote = !inQuote
+			if inQuote {
+				continue
+			}
+		}
+		if !inQuote && (ch == ',' || ch == '}') {
+			value = rest[:i]
+			break
+		}
+		if i == len(rest)-1 {
+			value = rest
+		}
+	}
+
+	value = strings.TrimSpace(value)
+	value = strings.Trim(value, `"`)
+	value = strings.TrimSpace(value)
+	return value
+}
+
+func (p *Parser) parseParticipant(rest string, d *Diagram, isActor bool) error {
+	ptype := TypeParticipant
 	if isActor {
 		ptype = TypeActor
 	}
+
 	var inlineAlias string
 
-	if i := strings.Index(rest, "@{"); i >= 0 {
-		end := strings.Index(rest[i:], "}")
-		if end >= 0 {
-			jsonStr := rest[i+2 : i+end]
+	// Check for JSON config like: ID@{"type": "database", "alias": "..."}
+	// Also handle unquoted keys: ID@{type: database}
+	if idx := strings.Index(rest, "@{"); idx >= 0 {
+		endIdx := strings.Index(rest[idx:], "}")
+		if endIdx >= 0 {
+			jsonStr := rest[idx+2 : idx+endIdx]
 			var cfg map[string]any
-			if err := json.Unmarshal([]byte(jsonStr), &cfg); err == nil {
+			// Add braces to make it valid JSON
+			fullJSON := "{" + jsonStr + "}"
+			if err := json.Unmarshal([]byte(fullJSON), &cfg); err == nil {
 				if typeStr, ok := cfg["type"].(string); ok {
 					ptype = parseParticipantType(typeStr)
 				}
 				if alias, ok := cfg["alias"].(string); ok {
-					inlineAlias = alias
+					inlineAlias = diagram.CleanLabel(alias)
+				}
+			} else {
+				// Try to parse manually for unquoted keys/values
+				if typeMatch := extractJSONField(jsonStr, "type"); typeMatch != "" {
+					ptype = parseParticipantType(typeMatch)
+				}
+				if aliasMatch := extractJSONField(jsonStr, "alias"); aliasMatch != "" {
+					inlineAlias = diagram.CleanLabel(aliasMatch)
 				}
 			}
 		}
-		rest = rest[:i] + rest[i+end+1:]
+		rest = rest[:idx] + rest[idx+endIdx+1:]
 		rest = strings.TrimSpace(rest)
 	}
 
-	// Parse ID and alias
-	var id, display string
+	// Parse ID and alias: "ID" or "ID as Display"
+	var id, alias string
 	if idx := strings.Index(rest, " as "); idx >= 0 {
 		id = strings.TrimSpace(rest[:idx])
-		display = strings.TrimSpace(rest[idx+4:])
+		alias = diagram.CleanLabel(strings.TrimSpace(rest[idx+4:]))
 	} else {
-		id = rest
-		display = inlineAlias
-		if display == "" {
-			display = id
+		id = strings.TrimSpace(rest)
+		if inlineAlias != "" {
+			alias = inlineAlias
+		} else {
+			alias = id
 		}
 	}
 
-	// Clean up display name (handle multiline with <br>)
-	display = diagram.CleanLabel(display)
+	if id == "" {
+		return fmt.Errorf("participant must have an ID")
+	}
+
+	// Check for duplicates
+	for _, p := range d.Participants {
+		if p.ID == id {
+			return fmt.Errorf("participant %q already defined", id)
+		}
+	}
 
 	participant := &Participant{
-		ID:      id,
-		Display: display,
-		Type:    ptype,
-		Order:   len(d.participants),
+		ID:     id,
+		Alias:  alias,
+		Type:   ptype,
+		LineNo: p.lineNo,
 	}
-	d.participants = append(d.participants, participant)
+	d.Participants = append(d.Participants, participant)
 
 	return nil
 }
@@ -284,197 +452,467 @@ func parseParticipantType(t string) ParticipantType {
 }
 
 func (p *Parser) parseAutonumber(line string, d *Diagram) error {
-	rest := line[len("autonumber"):]
-	rest = strings.TrimSpace(rest)
+	rest := strings.TrimSpace(line[10:])
+
+	if strings.ToLower(rest) == "off" {
+		if d.Autonumber != nil {
+			d.Autonumber.Active = false
+		}
+		return nil
+	}
 
 	parts := strings.Fields(rest)
 	start, incr := 1.0, 1.0
 
-	if len(parts) >= 1 {
-		if f, err := parseFloat(parts[0]); err == nil {
+	if len(parts) >= 1 && parts[0] != "" {
+		if f, err := strconv.ParseFloat(parts[0], 64); err == nil {
 			start = f
 		}
 	}
 	if len(parts) >= 2 {
-		if f, err := parseFloat(parts[1]); err == nil {
+		if f, err := strconv.ParseFloat(parts[1], 64); err == nil {
 			incr = f
 		}
 	}
 
-	d.autonumber = &Autonumber{Start: start, Increment: incr}
+	d.Autonumber = &Autonumber{Start: start, Increment: incr, Active: true}
 	return nil
+}
+
+func (p *Parser) parseCreate(rest string, d *Diagram) error {
+	// create [participant|actor] ID [as Alias]
+	isActor := false
+	if strings.HasPrefix(rest, "participant ") {
+		rest = rest[12:]
+	} else if strings.HasPrefix(rest, "actor ") {
+		rest = rest[6:]
+		isActor = true
+	}
+
+	if err := p.parseParticipant(rest, d, isActor); err != nil {
+		return err
+	}
+
+	// The next statement should be a message to/from this participant
+	// which will be marked as its creation point
+	return nil
+}
+
+func (p *Parser) parseDestroy(rest string, d *Diagram) error {
+	participantID := strings.TrimSpace(rest)
+	if participantID == "" {
+		return fmt.Errorf("destroy requires a participant ID")
+	}
+	// Mark this participant for destruction on the next message
+	// This is handled during rendering
+	return nil
+}
+
+func (p *Parser) parseActivate(rest string, d *Diagram) error {
+	participantID := strings.TrimSpace(rest)
+	if participantID == "" {
+		return fmt.Errorf("activate requires a participant ID")
+	}
+	// Handled via arrow suffixes, but this is also valid syntax
+	return nil
+}
+
+func (p *Parser) parseDeactivate(rest string, d *Diagram) error {
+	participantID := strings.TrimSpace(rest)
+	if participantID == "" {
+		return fmt.Errorf("deactivate requires a participant ID")
+	}
+	// Handled via arrow suffixes, but this is also valid syntax
+	return nil
+}
+
+func (p *Parser) parseNote(line string, d *Diagram) error {
+	// Note [left of|right of|over] [Participant][,Participant]: Text
+	rest := strings.TrimSpace(line[4:])
+
+	var position NotePosition
+	var participantPart string
+
+	if strings.HasPrefix(rest, "left of ") {
+		position = NoteLeft
+		rest = rest[8:]
+	} else if strings.HasPrefix(rest, "right of ") {
+		position = NoteRight
+		rest = rest[9:]
+	} else if strings.HasPrefix(rest, "over ") {
+		position = NoteOver
+		rest = rest[5:]
+	}
+
+	// Split on colon to separate participants from text
+	colonIdx := strings.Index(rest, ":")
+	if colonIdx < 0 {
+		return nil // Skip malformed notes
+	}
+
+	participantPart = strings.TrimSpace(rest[:colonIdx])
+	noteText := diagram.CleanLabel(rest[colonIdx+1:])
+
+	// Parse participant list
+	var participants []*Participant
+	for pidStr := range strings.SplitSeq(participantPart, ",") {
+		pidStr = strings.TrimSpace(pidStr)
+		if pidStr == "" {
+			continue
+		}
+		pid := findParticipant(d, pidStr)
+		if pid != nil {
+			participants = append(participants, pid)
+		} else {
+			// Implicit participant
+			pid = &Participant{ID: pidStr, Alias: pidStr, Type: TypeParticipant, LineNo: p.lineNo}
+			d.Participants = append(d.Participants, pid)
+			participants = append(participants, pid)
+		}
+	}
+
+	note := &Note{
+		Position: position,
+		For:      participants,
+		Text:     noteText,
+		LineNo:   p.lineNo,
+	}
+	d.Messages = append(d.Messages, note)
+	return nil
+}
+
+func (p *Parser) parseBlock(line string, d *Diagram, kind BlockKind) error {
+	var blockKeyword string
+	var cond string
+
+	switch kind {
+	case BlockLoop:
+		blockKeyword = "loop"
+		cond = strings.TrimSpace(line[5:])
+	case BlockAlt:
+		blockKeyword = "alt"
+		cond = strings.TrimSpace(line[4:])
+	case BlockOpt:
+		blockKeyword = "opt"
+		cond = strings.TrimSpace(line[4:])
+	case BlockPar:
+		blockKeyword = "par"
+		cond = strings.TrimSpace(line[4:])
+	case BlockCritical:
+		blockKeyword = "critical"
+		cond = strings.TrimSpace(line[9:])
+	case BlockBreak:
+		blockKeyword = "break"
+		cond = strings.TrimSpace(line[6:])
+	}
+
+	p.pos++
+	block := &Block{
+		Kind:   kind,
+		Label:  cond,
+		Cond:   cond,
+		LineNo: p.lineNo,
+	}
+
+	var currentClause *BlockClause
+	if kind == BlockAlt || kind == BlockPar || kind == BlockCritical {
+		currentClause = &BlockClause{Kind: blockKeyword, Cond: cond, Children: []Statement{}}
+	}
+
+	// Parse block contents
+	for p.pos < len(p.lines) {
+		p.lineNo = p.pos + 1
+		line := strings.TrimSpace(p.lines[p.pos])
+
+		if line == "" || strings.HasPrefix(line, "%%") {
+			p.pos++
+			continue
+		}
+
+		if line == "end" {
+			if currentClause != nil {
+				block.Clauses = append(block.Clauses, currentClause)
+			}
+			d.Messages = append(d.Messages, block)
+			return nil
+		}
+
+		if kind == BlockAlt && strings.HasPrefix(line, "else") {
+			if currentClause != nil {
+				block.Clauses = append(block.Clauses, currentClause)
+			}
+			cond := strings.TrimSpace(line[4:])
+			currentClause = &BlockClause{Kind: "else", Cond: cond, Children: []Statement{}}
+			p.pos++
+			continue
+		}
+
+		if kind == BlockPar && strings.HasPrefix(line, "and ") {
+			if currentClause != nil {
+				block.Clauses = append(block.Clauses, currentClause)
+			}
+			cond := strings.TrimSpace(line[4:])
+			currentClause = &BlockClause{Kind: "and", Cond: cond, Children: []Statement{}}
+			p.pos++
+			continue
+		}
+
+		if kind == BlockCritical && strings.HasPrefix(line, "option ") {
+			if currentClause != nil {
+				block.Clauses = append(block.Clauses, currentClause)
+			}
+			cond := strings.TrimSpace(line[7:])
+			currentClause = &BlockClause{Kind: "option", Cond: cond, Children: []Statement{}}
+			p.pos++
+			continue
+		}
+
+		// Parse statement inside block
+		stmt, err := p.parseBlockStatement(line)
+		if err == nil && stmt != nil {
+			if currentClause != nil {
+				currentClause.Children = append(currentClause.Children, stmt)
+			} else {
+				block.Children = append(block.Children, stmt)
+			}
+		}
+		p.pos++
+	}
+
+	return fmt.Errorf("block not closed with 'end'")
+}
+
+func (p *Parser) parseBlockStatement(line string) (Statement, error) {
+	// Parse a single statement inside a block
+	if msg, err := p.parseMessage(line); err == nil {
+		return msg, nil
+	}
+	if strings.HasPrefix(line, "Note ") {
+		if err := p.parseNote(line, &Diagram{Participants: []*Participant{}}); err == nil {
+			// Return a dummy, we'll re-parse properly
+			return nil, nil
+		}
+	}
+	return nil, fmt.Errorf("unknown statement in block")
+}
+
+func (p *Parser) parseRect(line string, d *Diagram) error {
+	// rect [rgb|rgba|hsl|hsla](...)
+	//   ... content ...
+	// end
+
+	rest := strings.TrimSpace(line[4:])
+	color := rest
+
+	p.pos++
+	block := &Block{
+		Kind:   BlockRect,
+		Label:  "",
+		Color:  color,
+		LineNo: p.lineNo,
+	}
+
+	// Parse block contents
+	for p.pos < len(p.lines) {
+		p.lineNo = p.pos + 1
+		line := strings.TrimSpace(p.lines[p.pos])
+
+		if line == "" || strings.HasPrefix(line, "%%") {
+			p.pos++
+			continue
+		}
+
+		if line == "end" {
+			d.Messages = append(d.Messages, block)
+			return nil
+		}
+
+		if msg, err := p.parseMessage(line); err == nil && msg != nil {
+			block.Children = append(block.Children, msg)
+		}
+		p.pos++
+	}
+
+	return fmt.Errorf("rect block not closed with 'end'")
 }
 
 func (p *Parser) parseBox(line string, d *Diagram) error {
 	// box [color] [title]
-	// ... participants ...
+	//   participant ...
+	//   participant ...
 	// end
-	rest := line[3:]
-	rest = strings.TrimSpace(rest)
 
+	rest := strings.TrimSpace(line[3:])
+
+	// Try to parse color and title
 	var color, title string
-	// Simple parsing: first token might be a color, rest is title
-	parts := strings.SplitN(rest, " ", 2)
-	if len(parts) == 2 && isColorName(parts[0]) {
-		color = parts[0]
-		title = parts[1]
-	} else if len(parts) > 0 && parts[0] != "" {
-		title = rest
+	if rest != "" {
+		if isColorValue(rest) {
+			spaceIdx := strings.Index(rest, " ")
+			if spaceIdx < 0 {
+				color = rest
+			} else {
+				color = rest[:spaceIdx]
+				title = strings.TrimSpace(rest[spaceIdx:])
+			}
+		} else {
+			title = rest
+		}
 	}
 
-	box := &Box{
+	p.pos++
+	box := &BoxDef{
 		Title:        title,
 		Color:        color,
 		Participants: []*Participant{},
+		LineNo:       p.lineNo,
 	}
 
-	// Collect participants until 'end'
-	for p.pos++; p.pos < len(p.lines); p.pos++ {
-		l := p.lines[p.pos]
-		if strings.TrimSpace(l) == "end" {
-			break
+	// Parse participants in box
+	for p.pos < len(p.lines) {
+		p.lineNo = p.pos + 1
+		line := strings.TrimSpace(p.lines[p.pos])
+
+		if line == "" || strings.HasPrefix(line, "%%") {
+			p.pos++
+			continue
 		}
-		// Check if this line declares a participant within the box
-		if strings.HasPrefix(l, "participant ") || strings.HasPrefix(l, "actor ") {
-			// Parse and add to box
-			tempD := &Diagram{}
-			if err := p.parseLine(l, tempD); err != nil {
+
+		if line == "end" {
+			d.Boxes = append(d.Boxes, box)
+			return nil
+		}
+
+		if strings.HasPrefix(line, "participant ") {
+			isActor := false
+			if err := p.parseParticipant(line[12:], d, isActor); err != nil {
 				return err
 			}
-			if len(tempD.participants) > 0 {
-				participant := tempD.participants[0]
-				participant.Box = box
-				box.Participants = append(box.Participants, participant)
+			if len(d.Participants) > 0 {
+				lastP := d.Participants[len(d.Participants)-1]
+				lastP.Box = box
+				box.Participants = append(box.Participants, lastP)
+			}
+		} else if strings.HasPrefix(line, "actor ") {
+			if err := p.parseParticipant(line[6:], d, true); err != nil {
+				return err
+			}
+			if len(d.Participants) > 0 {
+				lastP := d.Participants[len(d.Participants)-1]
+				lastP.Box = box
+				box.Participants = append(box.Participants, lastP)
 			}
 		}
+
+		p.pos++
 	}
 
-	d.boxes = append(d.boxes, box)
-	return nil
+	return fmt.Errorf("box block not closed with 'end'")
 }
 
-func (p *Parser) parseMessage(line string, d *Diagram) error {
-	// Format: From [Arrow] To: Message
-	// or Self message: From [Arrow] From: Message
+func (p *Parser) parseMessage(line string) (*Message, error) {
+	// Participant [->(arrow)][-/+] Participant[+/-]: message text
 
-	// Find the arrow
+	// Find arrow
 	arrowMatch := findArrow(line)
 	if arrowMatch.start < 0 {
-		return nil // Skip if no arrow found
+		return nil, nil
 	}
 
 	fromStr := strings.TrimSpace(line[:arrowMatch.start])
+	arrowStr := line[arrowMatch.start:arrowMatch.end]
 	afterArrow := strings.TrimSpace(line[arrowMatch.end:])
 
-	// Check for message text (after colon)
+	// Extract to and message text
 	var toStr, msgStr string
 	if before, after, ok := strings.Cut(afterArrow, ":"); ok {
 		toStr = strings.TrimSpace(before)
-		msgStr = strings.TrimSpace(after)
+		msgStr = diagram.CleanLabel(after)
 	} else {
 		toStr = afterArrow
 	}
 
-	// Check for activate/deactivate markers on from side
-	activate := ""
-	if strings.HasSuffix(fromStr, "+") && len(fromStr) > 1 && fromStr[len(fromStr)-2] != '-' && fromStr[len(fromStr)-2] != '>' {
-		fromStr = strings.TrimSpace(fromStr[:len(fromStr)-1])
-		activate = "+"
+	// Check for activation markers
+	var activateFrom, activateTo string
+	fromStr, activateFrom = extractActivation(fromStr)
+	toStr, activateTo = extractActivation(toStr)
+
+	fromID := strings.TrimSpace(fromStr)
+	toID := strings.TrimSpace(toStr)
+	arrowType := parseArrowType(arrowStr)
+
+	msg := &Message{
+		FromID:       fromID,
+		ToID:         toID,
+		Label:        msgStr,
+		Arrow:        arrowType,
+		LineNo:       p.lineNo,
+		ActivateFrom: activateFrom,
+		ActivateTo:   activateTo,
+		IsSelfLoop:   fromID == toID,
 	}
 
-	// Check for activate/deactivate markers on to side
-	if strings.HasSuffix(toStr, "+") && len(toStr) > 1 && toStr[len(toStr)-2] != '-' && toStr[len(toStr)-2] != '>' {
-		toStr = strings.TrimSpace(toStr[:len(toStr)-1])
-		activate = "+"
-	} else if strings.HasSuffix(toStr, "-") && len(toStr) > 1 && toStr[len(toStr)-2] != '-' && toStr[len(toStr)-2] != 'x' {
-		toStr = strings.TrimSpace(toStr[:len(toStr)-1])
-		activate = "-"
+	return msg, nil
+}
+
+func extractActivation(s string) (string, string) {
+	s = strings.TrimSpace(s)
+	// Check for prefix activation marker (e.g., "+Bob" or "-Bob")
+	if len(s) > 0 && (s[0] == '+' || s[0] == '-') {
+		return strings.TrimSpace(s[1:]), string(s[0])
 	}
-
-	fromID := fromStr
-	toID := toStr
-	arrowType := parseArrowType(line[arrowMatch.start:arrowMatch.end])
-
-	msg := Message{
-		FromID:     fromID,
-		ToID:       toID,
-		From:       findParticipant(d, fromID),
-		To:         findParticipant(d, toID),
-		Label:      diagram.CleanLabel(msgStr),
-		Arrow:      arrowType,
-		LineNo:     p.pos,
-		ActivateOn: activate,
-		SelfLoop:   fromID == toID,
+	// Check for suffix activation marker (e.g., "Bob+" or "Bob-")
+	if strings.HasSuffix(s, "+") && len(s) > 1 {
+		return strings.TrimSpace(s[:len(s)-1]), "+"
 	}
-
-	// Store message even if participants not yet found (for implicit collection)
-	d.messages = append(d.messages, msg)
-
-	return nil
+	if strings.HasSuffix(s, "-") && len(s) > 1 {
+		return strings.TrimSpace(s[:len(s)-1]), "-"
+	}
+	return s, ""
 }
 
 type arrowMatch struct {
-	start, end int
-	arrow      ArrowType
+	start int
+	end   int
+}
+
+var arrowPatterns = []struct {
+	pattern string
+	atype   ArrowType
+}{
+	{"<<-->>", ArrowBidirectionalDotted},
+	{"<<->>", ArrowBidirectional},
+	{"-->>", ArrowDottedFilledHead},
+	{"->>", ArrowFilledHead},
+	{"--x", ArrowCrossDotted},
+	{"-x", ArrowCross},
+	{"--)", ArrowAsyncDotted},
+	{"-)", ArrowAsync},
+	{"-->", ArrowDotted},
+	{"->", ArrowSolid},
 }
 
 func findArrow(line string) arrowMatch {
-	// Check for arrow types in order of specificity (longest first)
-	arrows := []struct {
-		pattern string
-		atype   ArrowType
-	}{
-		{"<<-->>", ArrowBidirectionalDotted},
-		{"<<->>", ArrowBidirectional},
-		{"-->>", ArrowDottedFilledHead},
-		{"->>", ArrowFilledHead},
-		{"--x", ArrowCrossDotted},
-		{"-x", ArrowCross},
-		{"--)", ArrowAsyncDotted},
-		{"-)", ArrowAsync},
-		{"-->", ArrowDotted},
-		{"->", ArrowSolid},
-	}
-
-	for _, a := range arrows {
-		if idx := strings.Index(line, a.pattern); idx >= 0 {
-			return arrowMatch{idx, idx + len(a.pattern), a.atype}
+	for _, ap := range arrowPatterns {
+		if idx := strings.Index(line, ap.pattern); idx >= 0 {
+			return arrowMatch{idx, idx + len(ap.pattern)}
 		}
 	}
-
-	return arrowMatch{-1, -1, ArrowSolid}
+	return arrowMatch{-1, -1}
 }
 
 func parseArrowType(arrowStr string) ArrowType {
-	switch arrowStr {
-	case "->":
-		return ArrowSolid
-	case "-->":
-		return ArrowDotted
-	case "->>":
-		return ArrowFilledHead
-	case "-->>":
-		return ArrowDottedFilledHead
-	case "<<->>":
-		return ArrowBidirectional
-	case "<<-->>":
-		return ArrowBidirectionalDotted
-	case "-x":
-		return ArrowCross
-	case "--x":
-		return ArrowCrossDotted
-	case "-)":
-		return ArrowAsync
-	case "--)":
-		return ArrowAsyncDotted
-	default:
-		return ArrowSolid
+	for _, ap := range arrowPatterns {
+		if ap.pattern == arrowStr {
+			return ap.atype
+		}
 	}
+	return ArrowSolid
 }
 
 func findParticipant(d *Diagram, id string) *Participant {
 	id = strings.TrimSpace(id)
-	for _, p := range d.participants {
+	for _, p := range d.Participants {
 		if p.ID == id {
 			return p
 		}
@@ -483,81 +921,87 @@ func findParticipant(d *Diagram, id string) *Participant {
 }
 
 func (d *Diagram) collectImplicitParticipants() {
-	// Extract participant IDs mentioned in messages
 	seenIDs := make(map[string]bool)
 	var implicitIDs []string
 
-	for _, p := range d.participants {
+	for _, p := range d.Participants {
 		seenIDs[p.ID] = true
 	}
 
-	// Collect all message participants that haven't been explicitly declared
-	for _, msg := range d.messages {
-		if msg.FromID != "" && !seenIDs[msg.FromID] {
-			seenIDs[msg.FromID] = true
-			implicitIDs = append(implicitIDs, msg.FromID)
-		}
-		if msg.ToID != "" && !seenIDs[msg.ToID] {
-			seenIDs[msg.ToID] = true
-			implicitIDs = append(implicitIDs, msg.ToID)
+	// Collect all participant IDs mentioned in messages
+	var collectIDs func([]Statement)
+	collectIDs = func(stmts []Statement) {
+		for _, stmt := range stmts {
+			switch s := stmt.(type) {
+			case *Message:
+				if s.FromID != "" && !seenIDs[s.FromID] {
+					seenIDs[s.FromID] = true
+					implicitIDs = append(implicitIDs, s.FromID)
+				}
+				if s.ToID != "" && !seenIDs[s.ToID] {
+					seenIDs[s.ToID] = true
+					implicitIDs = append(implicitIDs, s.ToID)
+				}
+			case *Block:
+				collectIDs(s.Children)
+				for _, clause := range s.Clauses {
+					collectIDs(clause.Children)
+				}
+			case *Note:
+				for _, p := range s.For {
+					seenIDs[p.ID] = true
+				}
+			}
 		}
 	}
 
+	collectIDs(d.Messages)
+
 	// Create implicit participants
-	order := len(d.participants)
+	order := len(d.Participants)
 	for _, id := range implicitIDs {
 		p := &Participant{
-			ID:      id,
-			Display: id,
-			Type:    TypeParticipant,
-			Order:   order,
+			ID:     id,
+			Alias:  id,
+			Type:   TypeParticipant,
+			LineNo: 0,
 		}
-		d.participants = append(d.participants, p)
+		d.Participants = append(d.Participants, p)
 		order++
 	}
 
-	// Re-link all messages to actual participant pointers
-	for i := range d.messages {
-		msg := &d.messages[i]
-		msg.From = findParticipant(d, msg.FromID)
-		msg.To = findParticipant(d, msg.ToID)
-	}
-}
-
-func (d *Diagram) validateAndNormalize() error {
-	// Ensure all messages reference valid participants
-	for i, msg := range d.messages {
-		if msg.From == nil || msg.To == nil {
-			return fmt.Errorf("message %d has missing participant", i)
+	// Link messages to actual participant pointers
+	var linkParticipants func([]Statement)
+	linkParticipants = func(stmts []Statement) {
+		for i, stmt := range stmts {
+			switch s := stmt.(type) {
+			case *Message:
+				stmts[i].(*Message).From = findParticipant(d, s.FromID)
+				stmts[i].(*Message).To = findParticipant(d, s.ToID)
+			case *Block:
+				linkParticipants(s.Children)
+				for _, clause := range s.Clauses {
+					linkParticipants(clause.Children)
+				}
+			case *Note:
+				// Already linked during parsing
+			}
 		}
 	}
-	return nil
+
+	linkParticipants(d.Messages)
 }
 
-// Helper functions
-
-func parseStringArg(s string) string {
-	s = strings.TrimSpace(s)
-	if len(s) >= 2 && s[0] == '"' && s[len(s)-1] == '"' {
-		return s[1 : len(s)-1]
-	}
-	return s
-}
-
-func parseFloat(s string) (float64, error) {
-	var f float64
-	_, err := fmt.Sscanf(s, "%f", &f)
-	return f, err
-}
-
-func isColorName(s string) bool {
-	colorNames := map[string]bool{
-		"red": true, "blue": true, "green": true, "yellow": true,
-		"purple": true, "orange": true, "pink": true, "brown": true,
-		"gray": true, "black": true, "white": true, "aqua": true,
-		"navy": true, "teal": true, "olive": true, "lime": true,
-		"maroon": true, "silver": true, "fuchsia": true, "transparent": true,
-	}
+// Helper to check if a string looks like a color value
+func isColorValue(s string) bool {
 	s = strings.ToLower(strings.TrimSpace(s))
-	return colorNames[s] || strings.HasPrefix(s, "rgb") || strings.HasPrefix(s, "#")
+	if strings.HasPrefix(s, "rgb") || strings.HasPrefix(s, "#") {
+		return true
+	}
+	colorNames := map[string]bool{
+		"transparent": true, "aqua": true, "red": true, "blue": true,
+		"green": true, "yellow": true, "purple": true, "orange": true,
+	}
+	firstWord := strings.Fields(s)[0]
+	return colorNames[firstWord]
 }

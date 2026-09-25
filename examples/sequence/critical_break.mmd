@@ -1,0 +1,21 @@
+sequenceDiagram
+    participant User
+    participant System as System Process
+    participant Cache
+    
+    User->>+System: Request data
+    System->>+Cache: Check cache
+    
+    critical Fetch from cache
+        Cache-->>-System: Data found
+    option Cache miss
+        System->>System: Fetch from DB
+        System->>Cache: Update cache
+    end
+    
+    System-->>-User: Return data
+    
+    break Cache connection lost
+        System->>+Cache: Reconnect
+        Note right of Cache: Attempting recovery
+    end

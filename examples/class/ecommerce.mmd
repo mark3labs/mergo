@@ -1,0 +1,108 @@
+---
+title: E-Commerce Domain Model with Generics and Namespaces
+---
+classDiagram
+    direction TB
+
+    namespace Domain.Catalog {
+        class Product {
+            -id: string
+            -name: string
+            -price: Money
+            -inventory: int
+            +getPrice() Money
+            +reduceInventory(int)
+        }
+
+        class Category {
+            -id: string
+            -name: string
+            +getProducts() List~Product~
+        }
+
+        class ProductVariant~T~ {
+            -sku: string
+            -variant: T
+            +getSku() string
+        }
+    }
+
+    namespace Domain.Order {
+        class Order {
+            -id: string
+            -customerId: string
+            -createdAt: DateTime
+            -status: OrderStatus
+            #calculateTotal() Money$
+            +placeOrder()*
+            +cancel()*
+        }
+
+        class OrderItem {
+            -productId: string
+            -quantity: int
+            -unitPrice: Money
+            +getSubtotal() Money
+        }
+
+        class OrderStatus <<enumeration>> {
+            PENDING
+            CONFIRMED
+            SHIPPED
+            DELIVERED
+        }
+    }
+
+    namespace Domain.Payment {
+        class PaymentProcessor <<interface>> {
+            +authorize() bool*
+            +capture() bool*
+        }
+
+        class CreditCardProcessor {
+            -provider: string
+            +authorize() bool
+            +capture() bool
+            -validateCard(string)$
+        }
+
+        class PayPalProcessor {
+            -apiKey: string
+            +authorize() bool
+            +capture() bool
+        }
+    }
+
+    namespace Domain.Customer {
+        class Customer {
+            -id: string
+            -name: string
+            -email: string
+            +placeOrder(List~OrderItem~) Order
+            +getOrderHistory() List~Order~
+        }
+
+        class CustomerAccount {
+            -customer: Customer
+            -balance: Money
+            +topUp(Money)
+            +pay(Money) bool
+        }
+    }
+
+    % Relationships with cardinality
+    Customer "1" --> "*" Order : places
+    Order "1" *-- "*" OrderItem : contains
+    Product <|-- ProductVariant~T~
+    Category "1" o-- "*" Product : has
+    Order --> OrderStatus : uses
+    Order --> PaymentProcessor : uses
+    PaymentProcessor <|-- CreditCardProcessor
+    PaymentProcessor <|-- PayPalProcessor
+    Customer --> CustomerAccount : has
+
+    % Styling
+    classDef abstractClass fill:#f0f0f0,stroke:#333,stroke-width:2px,color:#000
+    classDef serviceClass fill:#e1f5ff,stroke:#01579b,stroke-width:2px
+    class PaymentProcessor abstractClass
+    class CreditCardProcessor serviceClass

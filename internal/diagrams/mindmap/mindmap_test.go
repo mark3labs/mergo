@@ -144,3 +144,68 @@ func TestMindmapEmptySource(t *testing.T) {
 		t.Fatal("scene is nil")
 	}
 }
+
+func TestMindmapDeepTree(t *testing.T) {
+	// Test a large, deep tree for potential overlaps
+	src := `root
+  A
+    A1
+      A1a
+        A1a1
+        A1a2
+      A1b
+    A2
+  B
+    B1
+      B1a
+      B1b
+        B1b1
+  C
+    C1
+    C2
+    C3`
+
+	th := theme.Default()
+	sc, err := Render(src, &diagram.Config{Theme: th})
+	if err != nil {
+		t.Fatalf("Render failed: %v", err)
+	}
+
+	if sc == nil {
+		t.Fatal("scene is nil")
+	}
+
+	// Render to image to check for panics
+	img := sc.Render(scene.RenderOptions{Scale: 1})
+	if img == nil {
+		t.Fatal("rendered image is nil")
+	}
+
+	// Check that dimensions are reasonable
+	if sc.Width <= 0 || sc.Height <= 0 {
+		t.Errorf("scene dimensions invalid: %v x %v", sc.Width, sc.Height)
+	}
+}
+
+func TestMindmapParserRobustness(t *testing.T) {
+	// Test various prefixes to ensure parser doesn't panic
+	tests := []struct {
+		name string
+		src  string
+	}{
+		{"OneLinePrefix", "root"},
+		{"TwoLinesPrefix", "root\n  child"},
+		{"ThreeLinesPrefix", "root\n  child\n    grandchild"},
+		{"MultipleChildren", "root\n  A\n  B\n  C"},
+	}
+
+	th := theme.Default()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := Render(tt.src, &diagram.Config{Theme: th})
+			if err != nil {
+				t.Fatalf("Render failed for %s: %v", tt.name, err)
+			}
+		})
+	}
+}

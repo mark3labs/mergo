@@ -1,0 +1,68 @@
+---
+title: Order Processing with Fork/Join and Choice
+---
+stateDiagram-v2
+    direction TB
+
+    [*] --> OrderReceived
+
+    OrderReceived : New order received
+
+    state ProcessOrder {
+        direction TB
+        [*] --> ValidateOrder
+        ValidateOrder : Validate order items and amounts
+        ValidateOrder --> CheckInventory : validation passed
+        CheckInventory : Check product availability
+        CheckInventory --> [*]
+    }
+
+    OrderReceived --> ProcessOrder : start processing
+
+    ProcessOrder --> state_choice <<choice>>
+
+    state_choice --> OutOfStock : inventory insufficient
+    state_choice --> ContinueProcessing : inventory available
+
+    OutOfStock : Notify customer
+
+    OutOfStock --> [*]
+
+    state ContinueProcessing {
+        direction TB
+        [*] --> fork_state <<fork>>
+        fork_state --> PaymentProcessing
+        fork_state --> ShippingPrep
+
+        state PaymentProcessing {
+            [*] --> AuthorizePayment
+            AuthorizePayment --> CapturePayment : authorized
+            CapturePayment --> [*]
+        }
+
+        state ShippingPrep {
+            [*] --> PickItems
+            PickItems --> PackItems
+            PackItems --> [*]
+        }
+
+        PaymentProcessing --> join_state <<join>>
+        ShippingPrep --> join_state <<join>>
+        join_state --> [*]
+    }
+
+    ContinueProcessing --> OrderComplete
+
+    OrderComplete : Order ready for shipment
+
+    OrderComplete --> [*]
+
+    note right of ProcessOrder
+        Validate order and check
+        inventory availability
+    end note
+
+    note right of ContinueProcessing
+        Process payment and prepare
+        shipment in parallel
+    end note

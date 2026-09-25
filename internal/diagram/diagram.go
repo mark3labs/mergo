@@ -159,12 +159,23 @@ func Preprocess(src string) (*Document, error) {
 	doc := &Document{Raw: map[string]any{}}
 
 	// Front matter
+	// Removed regions are replaced by blank lines so that line numbers in
+	// error messages still refer to the original source.
 	trimmed := strings.TrimLeft(src, " \t\n")
 	if strings.HasPrefix(trimmed, "---") {
+		lead := src[:len(src)-len(trimmed)]
 		rest := trimmed[3:]
 		if i := strings.Index(rest, "\n---"); i >= 0 {
 			fm := rest[:i]
-			src = rest[i+4:]
+			after := rest[i+4:]
+			// drop the remainder of the closing fence line
+			if j := strings.IndexByte(after, '\n'); j >= 0 {
+				after = after[j:]
+			} else {
+				after = ""
+			}
+			removed := lead + "---" + rest[:i+4]
+			src = strings.Repeat("\n", strings.Count(removed, "\n")) + after
 			var m map[string]any
 			if err := yaml.Unmarshal([]byte(fm), &m); err == nil {
 				if t, ok := m["title"].(string); ok {
@@ -181,18 +192,19 @@ func Preprocess(src string) (*Document, error) {
 	src = directiveRe.ReplaceAllStringFunc(src, func(d string) string {
 		m := directiveRe.FindStringSubmatch(d)
 		body := strings.TrimSpace(m[1])
+		blank := strings.Repeat("\n", strings.Count(d, "\n"))
 		name, arg, found := strings.Cut(body, ":")
 		if !found {
-			return ""
+			return blank
 		}
 		name = strings.TrimSpace(strings.ToLower(name))
 		if name != "init" && name != "initialize" {
-			return ""
+			return blank
 		}
 		if v := parseLooseJSON(arg); v != nil {
 			mergeMaps(doc.Raw, v)
 		}
-		return ""
+		return blank
 	})
 
 	// Remove comments and accessibility statements.
@@ -204,18 +216,19 @@ func Preprocess(src string) (*Document, error) {
 			if strings.Contains(t, "}") {
 				inAccDescr = false
 			}
+			lines = append(lines, "")
 			continue
 		}
 		if strings.HasPrefix(t, "%%") {
+			lines = append(lines, "")
 			continue
 		}
 		if strings.HasPrefix(t, "accTitle") || strings.HasPrefix(t, "accDescr") {
 			if strings.HasPrefix(t, "accDescr") && strings.Contains(t, "{") && !strings.Contains(t, "}") {
 				inAccDescr = true
 			}
-			if strings.HasPrefix(t, "accTitle") || strings.HasPrefix(t, "accDescr") {
-				continue
-			}
+			lines = append(lines, "")
+			continue
 		}
 		lines = append(lines, line)
 	}

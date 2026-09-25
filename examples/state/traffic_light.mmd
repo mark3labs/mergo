@@ -1,0 +1,23 @@
+---
+title: Traffic Light State Machine
+---
+stateDiagram-v2
+    direction LR
+
+    [*] --> Red
+
+    Red : Stop traffic
+    Green : Go - allow traffic
+    Yellow : Prepare to stop
+
+    Red --> Green : timer expired
+    Green --> Yellow : timer expired
+    Yellow --> Red : timer expired
+
+    classDef stopState fill:#ffcccc,stroke:#cc0000,stroke-width:2px
+    classDef goState fill:#ccffcc,stroke:#00cc00,stroke-width:2px
+    classDef cautionState fill:#ffffcc,stroke:#ffaa00,stroke-width:2px
+
+    class Red stopState
+    class Green goState
+    class Yellow cautionState

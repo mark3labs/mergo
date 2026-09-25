@@ -1,0 +1,55 @@
+---
+title: Generic Collections with Nested Generics
+---
+classDiagram
+    class List~T~ {
+        -items: T[]
+        -size: int
+        +add(T item)
+        +remove(T item)
+        +get(int index) T
+        +size() int
+    }
+
+    class Set~T~ {
+        -elements: T[]
+        +add(T item) bool
+        +contains(T item) bool
+        +remove(T item) bool
+    }
+
+    class Map~K~V~ {
+        -entries: Entry~K~V~[]
+        +put(K key, V value)
+        +get(K key) V
+        +remove(K key)
+    }
+
+    class Entry~K~V~ {
+        -key: K
+        -value: V
+        +getKey() K
+        +getValue() V
+    }
+
+    class Iterator~T~ <<interface>> {
+        +hasNext() bool*
+        +next() T*
+    }
+
+    class Collection~T~ <<interface>> {
+        +add(T)*
+        +remove(T)*
+        +iterator() Iterator~T~*
+    }
+
+    Collection~T~ <|-- List~T~
+    Collection~T~ <|-- Set~T~
+    Map~K~V~ --> Entry~K~V~ : contains
+
+    classDef generic fill:#fff3e0,stroke:#e65100,stroke-width:2px
+    class List~T~ generic
+    class Set~T~ generic
+    class Map~K~V~ generic
+    class Entry~K~V~ generic
+    class Iterator~T~ generic

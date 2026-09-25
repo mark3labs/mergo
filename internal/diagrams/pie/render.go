@@ -35,7 +35,9 @@ func Render(src string, cfg *diagram.Config) (*scene.Scene, error) {
 	// Calculate total
 	total := 0.0
 	for _, s := range doc.Slices {
-		total += s.Value
+		if s.Value > 0 {
+			total += s.Value
+		}
 	}
 	if total <= 0 {
 		return sc, nil
@@ -113,7 +115,7 @@ func drawSliceLabel(sc *scene.Scene, cx, cy, r float64, startAngle, endAngle flo
 	label := fmt.Sprintf("%.0f%%", percent)
 
 	font := diagram.Font(th, 0.85)
-	sc.Add(scene.NewText(labelX, labelY, label, font, th.PrimaryTextColor, scene.AnchorMiddle, scene.VAlignMiddle))
+	sc.Add(scene.NewText(labelX, labelY, label, font, th.TextColor, scene.AnchorMiddle, scene.VAlignMiddle))
 }
 
 func drawLegendEntry(sc *scene.Scene, x, y float64, label string, value float64, showData bool, index int, th *theme.Theme) {
