@@ -125,7 +125,7 @@ func splitStatements(src string) []stmt {
 		}
 		cur.Reset()
 	}
-	for _, r := range src {
+	for i, r := range src {
 		switch {
 		case r == '\n':
 			line++
@@ -146,7 +146,7 @@ func splitStatements(src string) []stmt {
 			if depth > 0 {
 				depth--
 			}
-		case r == ';' && !inQuote && depth == 0:
+		case r == ';' && !inQuote && depth == 0 && (isStyleStmt(cur.String()) || !diagram.EndsEntity(src, i)):
 			flush()
 			curLine = line
 			continue
@@ -158,6 +158,14 @@ func splitStatements(src string) []stmt {
 	}
 	flush()
 	return out
+}
+
+// isStyleStmt reports whether a (partial) statement is a style directive,
+// where "#333;" is a color followed by a separator rather than an entity
+// (Mermaid special-cases these the same way).
+func isStyleStmt(s string) bool {
+	kw, _, _ := strings.Cut(strings.TrimSpace(s), " ")
+	return kw == "style" || kw == "classDef" || kw == "linkStyle"
 }
 
 var headerRe = regexp.MustCompile(`^(?:graph|flowchart|flowchart-elk)(?:\s+(\S+))?\s*$`)

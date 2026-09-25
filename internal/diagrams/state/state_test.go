@@ -191,3 +191,13 @@ func TestExamplesGeometry(t *testing.T) {
 		}
 	}
 }
+
+func TestEntityAtLineEnd(t *testing.T) {
+	d := parse(t, "a --> b : say #quot;go#quot;\nb --> c : done;")
+	if got := d.Transitions[0].Label; got != `say "go"` {
+		t.Errorf("label %q", got)
+	}
+	if got := d.Transitions[1].Label; got != "done" {
+		t.Errorf("label %q", got)
+	}
+}

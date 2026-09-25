@@ -279,3 +279,13 @@ func TestExamplesGeometry(t *testing.T) {
 		}
 	}
 }
+
+func TestEntityAtLineEnd(t *testing.T) {
+	// the ';' closing an entity is not a statement terminator
+	d := parse(t, "A->>B: #quot;ok#quot;\nA->>B: fish &amp; chips;\nA->>B: plain;")
+	for i, want := range []string{`"ok"`, "fish & chips", "plain"} {
+		if got := d.Events[i].Text; got != want {
+			t.Errorf("event %d text %q, want %q", i, got, want)
+		}
+	}
+}

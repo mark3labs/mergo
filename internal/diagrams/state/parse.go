@@ -119,7 +119,7 @@ func Parse(src string) (*Diagram, error) {
 			header = true
 			continue
 		}
-		if err := p.line(strings.TrimSuffix(line, ";"), ln); err != nil {
+		if err := p.line(diagram.TrimStatementEnd(line), ln); err != nil {
 			return nil, err
 		}
 	}

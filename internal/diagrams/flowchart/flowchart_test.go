@@ -362,3 +362,25 @@ func TestLayoutNoOverlap(t *testing.T) {
 		}
 	}
 }
+
+func TestSemicolonEntities(t *testing.T) {
+	g := mustParse(t, `flowchart LR
+    A -->|#quot;x#quot;| B; B -- #9829; --> C
+    classDef k fill:#333; class C k
+    style B fill:#abc,stroke:#333;B-->D`)
+	if len(g.Edges) != 3 {
+		t.Fatalf("edges %d, want 3", len(g.Edges))
+	}
+	if got := g.Edges[0].Label; got != `"x"` {
+		t.Errorf("edge 0 label %q", got)
+	}
+	if got := g.Edges[1].Label; got != "♥" {
+		t.Errorf("edge 1 label %q", got)
+	}
+	if c := g.Nodes["C"].Classes; len(c) != 1 || c[0] != "k" {
+		t.Errorf("C classes %v", c)
+	}
+	if g.ClassDefs["k"]["fill"] != "#333" || g.Nodes["B"].Style["stroke"] != "#333" {
+		t.Errorf("styles %v %v", g.ClassDefs, g.Nodes["B"].Style)
+	}
+}

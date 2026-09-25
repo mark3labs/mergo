@@ -606,6 +606,30 @@ func CleanInline(s string) string {
 	return strings.Join(strings.Fields(CleanLabel(s)), " ")
 }
 
+// entityTailRe matches an entity reference missing only its closing ';':
+// Mermaid's #name / #123 and HTML's &name / &#123 / &#x7b.
+var entityTailRe = regexp.MustCompile(`(?:#[a-zA-Z]+|#\d+|&[a-zA-Z][a-zA-Z0-9]*|&#\d+|&#[xX][0-9a-fA-F]+)$`)
+
+// EndsEntity reports whether the ';' at s[i] terminates an entity reference
+// such as #quot; or &amp; (so it is part of a label, not a statement
+// separator).
+func EndsEntity(s string, i int) bool {
+	if i <= 0 || i >= len(s) || s[i] != ';' {
+		return false
+	}
+	return entityTailRe.MatchString(s[max(0, i-32):i])
+}
+
+// TrimStatementEnd removes a trailing ';' statement terminator (and
+// surrounding space) unless it closes an entity reference.
+func TrimStatementEnd(s string) string {
+	s = strings.TrimSpace(s)
+	if n := len(s) - 1; n >= 0 && s[n] == ';' && !EndsEntity(s, n) {
+		s = strings.TrimSpace(s[:n])
+	}
+	return s
+}
+
 // Lines splits source into trimmed, non-empty lines. Semicolons are NOT
 // treated as separators (callers that need that should split themselves).
 func Lines(src string) []string {

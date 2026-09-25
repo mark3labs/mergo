@@ -92,6 +92,22 @@ func TestCleanLabel(t *testing.T) {
 	}
 }
 
+func TestTrimStatementEnd(t *testing.T) {
+	for in, want := range map[string]string{
+		"a --> b;":           "a --> b",
+		"say #quot;hi#quot;": "say #quot;hi#quot;",
+		"x #9829; ":          "x #9829;",
+		"fish &amp;":         "fish &amp;",
+		"&#38; &#x26;":       "&#38; &#x26;",
+		"trailing # ;":       "trailing #",
+		";":                  "",
+	} {
+		if got := diagram.TrimStatementEnd(in); got != want {
+			t.Errorf("TrimStatementEnd(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
 func TestAllTypesRegistered(t *testing.T) {
 	want := []string{"class", "er", "flowchart", "gantt", "gitGraph", "journey", "mindmap", "pie", "quadrantChart", "sequence", "state", "timeline", "xychart"}
 	got := strings.Join(diagram.Types(), ",")

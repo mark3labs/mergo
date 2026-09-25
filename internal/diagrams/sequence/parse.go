@@ -156,8 +156,8 @@ func Parse(src string) (*Diagram, error) {
 		if line == "" || strings.HasPrefix(line, "%%") {
 			continue
 		}
-		// strip trailing ';'
-		line = strings.TrimSpace(strings.TrimSuffix(line, ";"))
+		// strip a trailing ';' (but not one that ends an entity like #quot;)
+		line = diagram.TrimStatementEnd(line)
 		if !header {
 			if !strings.HasPrefix(line, "sequenceDiagram") {
 				return nil, fmt.Errorf("line %d: expected 'sequenceDiagram'", ln)
