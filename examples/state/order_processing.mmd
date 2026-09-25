@@ -1,68 +1,50 @@
 ---
-title: Order Processing with Fork/Join and Choice
+title: Order processing
 ---
 stateDiagram-v2
     direction TB
+    state if_stock <<choice>>
+    [*] --> Received
+    Received : New order received
+    Received --> Validating : submit
 
-    [*] --> OrderReceived
-
-    OrderReceived : New order received
-
-    state ProcessOrder {
-        direction TB
-        [*] --> ValidateOrder
-        ValidateOrder : Validate order items and amounts
-        ValidateOrder --> CheckInventory : validation passed
-        CheckInventory : Check product availability
+    state Validating {
+        direction LR
+        [*] --> CheckItems
+        CheckItems --> CheckInventory : items ok
         CheckInventory --> [*]
     }
-
-    OrderReceived --> ProcessOrder : start processing
-
-    ProcessOrder --> state_choice <<choice>>
-
-    state_choice --> OutOfStock : inventory insufficient
-    state_choice --> ContinueProcessing : inventory available
-
+    Validating --> if_stock
+    if_stock --> OutOfStock : insufficient
+    if_stock --> Fulfilment : available
     OutOfStock : Notify customer
-
     OutOfStock --> [*]
 
-    state ContinueProcessing {
-        direction TB
-        [*] --> fork_state <<fork>>
-        fork_state --> PaymentProcessing
-        fork_state --> ShippingPrep
-
-        state PaymentProcessing {
-            [*] --> AuthorizePayment
-            AuthorizePayment --> CapturePayment : authorized
-            CapturePayment --> [*]
+    state Fulfilment {
+        state fork_state <<fork>>
+        state join_state <<join>>
+        [*] --> fork_state
+        fork_state --> Payment
+        fork_state --> Shipping
+        state Payment {
+            [*] --> Authorize
+            Authorize --> Capture : authorized
+            Capture --> [*]
         }
-
-        state ShippingPrep {
-            [*] --> PickItems
-            PickItems --> PackItems
-            PackItems --> [*]
+        state Shipping {
+            [*] --> Pick
+            Pick --> Pack
+            Pack --> [*]
         }
-
-        PaymentProcessing --> join_state <<join>>
-        ShippingPrep --> join_state <<join>>
+        Payment --> join_state
+        Shipping --> join_state
         join_state --> [*]
     }
+    Fulfilment --> Completed
+    Completed --> [*]
 
-    ContinueProcessing --> OrderComplete
-
-    OrderComplete : Order ready for shipment
-
-    OrderComplete --> [*]
-
-    note right of ProcessOrder
-        Validate order and check
-        inventory availability
-    end note
-
-    note right of ContinueProcessing
-        Process payment and prepare
-        shipment in parallel
+    note right of OutOfStock : Customer can retry later
+    note left of Fulfilment
+        Payment and shipping
+        run in parallel
     end note

@@ -1,7 +1,8 @@
 package state
 
 import (
-	"fmt"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/mark3labs/mergo/internal/devutil"
@@ -10,308 +11,183 @@ import (
 	"github.com/mark3labs/mergo/internal/theme"
 )
 
-func TestParseBasicTransition(t *testing.T) {
-	src := `stateDiagram-v2
-[*] --> A
-A --> B
-B --> [*]`
-	p := newParser(&diagram.Config{Theme: theme.Default()})
-	if err := p.parse(src); err != nil {
-		t.Fatal(err)
+func parse(t *testing.T, src string) *Diagram {
+	t.Helper()
+	d, err := Parse("stateDiagram-v2\n" + src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
 	}
-	if len(p.relations) != 3 {
-		t.Errorf("expected 3 transitions, got %d", len(p.relations))
+	return d
+}
+
+func TestStatesAndTransitions(t *testing.T) {
+	d := parse(t, `[*] --> Still
+    Still --> [*]
+    Still --> Moving : push
+    Moving --> Crash
+    state "Long description" as LD
+    Moving : is moving
+    Moving : fast
+    Crash:::bad
+    state c <<choice>>
+    state f <<fork>>
+    state j <<join>>`)
+	if len(d.Transitions) != 4 {
+		t.Fatalf("transitions = %d", len(d.Transitions))
+	}
+	start, end := d.States[d.Transitions[0].From], d.States[d.Transitions[1].To]
+	if start.Kind != KindStart || end.Kind != KindEnd || start.ID == end.ID {
+		t.Errorf("start/end: %+v %+v", start, end)
+	}
+	if d.Transitions[2].Label != "push" {
+		t.Error("label")
+	}
+	if d.States["LD"].Label != "Long description" {
+		t.Error("state as")
+	}
+	if len(d.States["Moving"].Descs) != 2 {
+		t.Error("descriptions")
+	}
+	if d.States["Crash"].Classes[0] != "bad" {
+		t.Error(":::")
+	}
+	if d.States["c"].Kind != KindChoice || d.States["f"].Kind != KindFork || d.States["j"].Kind != KindJoin {
+		t.Error("pseudo states")
 	}
 }
 
-func TestParseStateDescription(t *testing.T) {
-	src := `stateDiagram-v2
-state "This is a state" as s1
-s1 --> s2
-s2 : Another state`
-	p := newParser(&diagram.Config{Theme: theme.Default()})
-	if err := p.parse(src); err != nil {
-		t.Fatal(err)
+func TestCompositeScopes(t *testing.T) {
+	d := parse(t, `[*] --> A
+    state A {
+        direction LR
+        [*] --> a1
+        a1 --> [*]
+        state Inner {
+            [*] --> i1
+        }
+        --
+        [*] --> b1
+    }
+    A --> [*]`)
+	a := d.States["A"]
+	if !a.IsComposite() || a.Dir != "LR" || len(a.Regions) != 2 {
+		t.Fatalf("composite %+v", a)
 	}
-	if len(p.states) < 2 {
-		t.Errorf("expected at least 2 states, got %d", len(p.states))
+	if d.States["a1"].Parent != "A" || d.States["i1"].Parent != "Inner" || d.States["Inner"].Parent != "A" {
+		t.Error("parents")
 	}
-}
-
-func TestParseTransitionWithLabel(t *testing.T) {
-	src := `stateDiagram-v2
-A --> B : transition label`
-	p := newParser(&diagram.Config{Theme: theme.Default()})
-	if err := p.parse(src); err != nil {
-		t.Fatal(err)
+	// [*] in different scopes are different nodes
+	starts := map[string]bool{}
+	for _, tr := range d.Transitions {
+		if d.States[tr.From].Kind == KindStart {
+			starts[tr.From] = true
+		}
 	}
-	if len(p.relations) != 1 {
-		t.Fatal("expected 1 transition")
-	}
-	if p.relations[0].label != "transition label" {
-		t.Errorf("expected label 'transition label', got '%s'", p.relations[0].label)
-	}
-}
-
-func TestParseSpecialMarkers(t *testing.T) {
-	src := `stateDiagram-v2
-fork_state <<fork>>
-choice_state <<choice>>
-join_state <<join>>`
-	p := newParser(&diagram.Config{Theme: theme.Default()})
-	if err := p.parse(src); err != nil {
-		t.Fatal(err)
-	}
-	if !p.states["fork_state"].isFork {
-		t.Error("fork_state not marked as fork")
-	}
-	if !p.states["choice_state"].isChoice {
-		t.Error("choice_state not marked as choice")
-	}
-	if !p.states["join_state"].isJoin {
-		t.Error("join_state not marked as join")
+	if len(starts) != 4 {
+		t.Errorf("start pseudo states = %d, want 4 (root, A region 0, Inner, A region 1)", len(starts))
 	}
 }
 
-func TestParseCompositeState(t *testing.T) {
-	src := `stateDiagram-v2
-state First {
-  [*] --> inner
-  inner --> [*]
-}
-[*] --> First
-First --> [*]`
-	p := newParser(&diagram.Config{Theme: theme.Default()})
-	if err := p.parse(src); err != nil {
-		t.Fatal(err)
+func TestNotesAndStyles(t *testing.T) {
+	d := parse(t, `A --> B
+    note right of A : short
+    note left of B
+        multi
+        line
+    end note
+    classDef hot fill:#f00
+    class A, B hot
+    style B stroke:#00f`)
+	if len(d.Notes) != 2 || d.Notes[0].Text != "short" || !d.Notes[1].Left || d.Notes[1].Text != "multi\nline" {
+		t.Errorf("notes %+v %+v", d.Notes[0], d.Notes[1])
 	}
-	if _, ok := p.states["First"]; !ok {
-		t.Fatal("First state not found")
-	}
-	firstState := p.states["First"]
-	if !firstState.isComposite {
-		t.Error("First should be marked as composite")
+	if d.States["A"].Classes[0] != "hot" || d.States["B"].Style["stroke"] != "#00f" {
+		t.Error("styles")
 	}
 }
 
-func TestParseNestedCompositeStates(t *testing.T) {
-	src := `stateDiagram-v2
-state First {
-  state Second {
-    [*] --> inner
-    inner --> [*]
-  }
-  [*] --> Second
-  Second --> [*]
-}
-[*] --> First
-First --> [*]`
-	p := newParser(&diagram.Config{Theme: theme.Default()})
-	if err := p.parse(src); err != nil {
-		t.Fatal(err)
-	}
-	if _, ok := p.states["First"]; !ok {
-		t.Fatal("First state not found")
+func TestErrors(t *testing.T) {
+	for _, src := range []string{"state A {\nB", "}", "note left of A\ntext", "A -> B -> C what"} {
+		if _, err := Parse("stateDiagram-v2\n" + src); err == nil {
+			t.Errorf("%q: expected error", src)
+		}
 	}
 }
 
-func TestParseDirection(t *testing.T) {
-	src := `stateDiagram-v2
-direction LR
-[*] --> A
-A --> B`
-	p := newParser(&diagram.Config{Theme: theme.Default()})
-	if err := p.parse(src); err != nil {
-		t.Fatal(err)
+func files(t *testing.T) []string {
+	fs, _ := filepath.Glob("../../../examples/state/*.mmd")
+	if len(fs) == 0 {
+		t.Fatal("no examples")
 	}
-	if p.direction != 2 { // LR is 2
-		t.Errorf("expected direction LR (2), got %d", p.direction)
+	return fs
+}
+
+func TestNeverPanics(t *testing.T) {
+	for _, f := range files(t) {
+		b, _ := os.ReadFile(f)
+		s := string(b)
+		for i := 0; i <= len(s); i += 3 {
+			func() {
+				defer func() {
+					if r := recover(); r != nil {
+						t.Fatalf("%s prefix %d: %v", f, i, r)
+					}
+				}()
+				_, _ = diagram.Render(s[:i], theme.Default())
+			}()
+		}
 	}
 }
 
-func TestParseStyleDef(t *testing.T) {
-	src := `stateDiagram-v2
-classDef active fill:#f9f,stroke:#333
-A:::active`
-	p := newParser(&diagram.Config{Theme: theme.Default()})
-	if err := p.parse(src); err != nil {
-		t.Fatal(err)
-	}
-	if len(p.styleClassDefs) == 0 {
-		t.Error("no style definitions found")
-	}
-}
-
-func TestParseNote(t *testing.T) {
-	src := `stateDiagram-v2
-state A
-note right of A
-  Important
-end note`
-	p := newParser(&diagram.Config{Theme: theme.Default()})
-	if err := p.parse(src); err != nil {
-		t.Fatal(err)
-	}
-	// Note parsing is simplified, just check no error
-}
-
-func TestRenderSmoke(t *testing.T) {
-	testCases := []struct {
-		name string
-		src  string
-	}{
-		{
-			"basic_flow",
-			`stateDiagram-v2
-[*] --> Still
-Still --> Moving
-Moving --> [*]`,
-		},
-		{
-			"with_labels",
-			`stateDiagram-v2
-[*] --> Draft
-Draft --> Submitted : submit
-Submitted --> [*]`,
-		},
-		{
-			"choice",
-			`stateDiagram-v2
-state if_state <<choice>>
-[*] --> Check
-Check --> if_state
-if_state --> True : yes
-if_state --> False : no`,
-		},
-		{
-			"with_description",
-			`stateDiagram-v2
-[*] --> FirstState
-FirstState : First state with description
-FirstState --> ProcessingState : begin processing
-ProcessingState : Processing something
-ProcessingState --> SecondState : done
-SecondState --> [*]`,
-		},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			sc, err := Render(tc.src, &diagram.Config{Theme: theme.Default()})
-			if err != nil {
-				t.Fatalf("render error: %v", err)
+func TestExamplesGeometry(t *testing.T) {
+	for _, f := range files(t) {
+		b, _ := os.ReadFile(f)
+		doc, err := diagram.Preprocess(string(b))
+		if err != nil {
+			t.Fatal(err)
+		}
+		d, err := Parse(doc.Source)
+		if err != nil {
+			t.Fatalf("%s: %v", f, err)
+		}
+		r := newRenderer(d, &diagram.Config{Theme: theme.Default()})
+		r.render()
+		var ids []string
+		for _, id := range d.Order {
+			if _, ok := r.nodes[id]; ok {
+				ids = append(ids, id)
 			}
-			if sc.Width < 10 || sc.Height < 10 {
-				t.Errorf("scene too small: %fx%f", sc.Width, sc.Height)
+		}
+		for i := range ids {
+			for j := i + 1; j < len(ids); j++ {
+				a, c := r.nodes[ids[i]].Rect(), r.nodes[ids[j]].Rect()
+				if a.X < c.X+c.W-1 && c.X < a.X+a.W-1 && a.Y < c.Y+c.H-1 && c.Y < a.Y+a.H-1 {
+					t.Errorf("%s: %s and %s overlap", f, ids[i], ids[j])
+				}
 			}
-		})
-	}
-}
-
-func TestRenderNoOverlap(t *testing.T) {
-	src := `stateDiagram-v2
-[*] --> FirstState
-FirstState : First state with description
-FirstState --> ProcessingState : begin processing
-ProcessingState : Processing something
-ProcessingState --> SecondState : done
-SecondState --> [*]`
-
-	sc, err := Render(src, &diagram.Config{Theme: theme.Default()})
-	if err != nil {
-		t.Fatalf("render error: %v", err)
-	}
-
-	if sc.Width < 50 || sc.Height < 50 {
-		t.Errorf("scene too small: %fx%f", sc.Width, sc.Height)
-	}
-
-	// Render to image for verification
-	img := sc.Render(scene.RenderOptions{Scale: 1})
-	if testing.Verbose() {
-		t.Log("\n" + devutil.ASCII(img, 140))
-	}
-}
-
-func TestRenderCompositeState(t *testing.T) {
-	src := `stateDiagram-v2
-[*] --> First
-state First {
-  [*] --> inner
-  inner --> [*]
-}
-First --> [*]`
-
-	sc, err := Render(src, &diagram.Config{Theme: theme.Default()})
-	if err != nil {
-		t.Fatalf("render error: %v", err)
-	}
-
-	if sc.Width < 10 || sc.Height < 10 {
-		t.Errorf("scene too small: %fx%f", sc.Width, sc.Height)
-	}
-
-	if testing.Verbose() {
-		img := sc.Render(scene.RenderOptions{Scale: 1})
-		t.Log("\n" + devutil.ASCII(img, 140))
-	}
-}
-
-func TestRenderChoice(t *testing.T) {
-	src := `stateDiagram-v2
-state if_state <<choice>>
-[*] --> Check
-Check --> if_state
-if_state --> True : yes
-if_state --> False : no`
-
-	sc, err := Render(src, &diagram.Config{Theme: theme.Default()})
-	if err != nil {
-		t.Fatalf("render error: %v", err)
-	}
-
-	if sc.Width < 10 || sc.Height < 10 {
-		t.Errorf("scene too small: %fx%f", sc.Width, sc.Height)
-	}
-}
-
-func TestRenderForkJoin(t *testing.T) {
-	src := `stateDiagram-v2
-state fork_state <<fork>>
-state join_state <<join>>
-[*] --> fork_state
-fork_state --> State2
-fork_state --> State3
-State2 --> join_state
-State3 --> join_state
-join_state --> [*]`
-
-	sc, err := Render(src, &diagram.Config{Theme: theme.Default()})
-	if err != nil {
-		t.Fatalf("render error: %v", err)
-	}
-
-	if sc.Width < 10 || sc.Height < 10 {
-		t.Errorf("scene too small: %fx%f", sc.Width, sc.Height)
-	}
-}
-
-func TestParseTruncations(t *testing.T) {
-	// Test that parser doesn't panic on truncations
-	testCases := []string{
-		"stateDiagram-v2",
-		"stateDiagram-v2\nstate",
-		"stateDiagram-v2\nstate A",
-		"stateDiagram-v2\nstate A {",
-		"stateDiagram-v2\nA -->",
-		"stateDiagram-v2\nA --> B :",
-		"stateDiagram-v2\nnote for A",
-	}
-
-	for i, src := range testCases {
-		t.Run(fmt.Sprintf("truncation_%d", i), func(t *testing.T) {
-			p := newParser(&diagram.Config{Theme: theme.Default()})
-			_ = p.parse(src) // Should not panic
-		})
+		}
+		// children inside their composite
+		for id, s := range d.States {
+			if s.Parent == "" {
+				continue
+			}
+			var cr scene.Rect
+			if n, ok := r.nodes[id]; ok {
+				cr = n.Rect()
+			} else {
+				cr = r.clusters[id].Rect()
+			}
+			pr := r.clusters[s.Parent].Rect()
+			if cr.X < pr.X-0.5 || cr.Y < pr.Y-0.5 || cr.X+cr.W > pr.X+pr.W+0.5 || cr.Y+cr.H > pr.Y+pr.H+0.5 {
+				t.Errorf("%s: %s escapes composite %s", f, id, s.Parent)
+			}
+		}
+		sc, err := diagram.Render(string(b), theme.MustGet("forest"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if testing.Verbose() {
+			t.Logf("%s\n%s", f, devutil.ASCII(sc.Render(scene.RenderOptions{Scale: 1}), 120))
+		}
 	}
 }
