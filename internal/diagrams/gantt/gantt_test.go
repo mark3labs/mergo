@@ -1,199 +1,154 @@
 package gantt
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/mark3labs/mergo/internal/devutil"
 	"github.com/mark3labs/mergo/internal/diagram"
+	"github.com/mark3labs/mergo/internal/scene"
 	"github.com/mark3labs/mergo/internal/theme"
 )
 
-func TestParseDateFormats(t *testing.T) {
-	tests := []struct {
-		name      string
-		dateStr   string
-		format    string
-		expectErr bool
-	}{
-		{"YYYY-MM-DD", "2024-01-15", "YYYY-MM-DD", false},
-		{"YY-MM-DD", "24-01-15", "YY-MM-DD", false},
-		{"MMM DD YYYY", "Jan 15 2024", "MMM DD YYYY", false},
-	}
+var fixedNow = time.Date(2024, 1, 15, 12, 0, 0, 0, time.UTC)
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			_, err := parseDate(tt.dateStr, tt.format)
-			if (err != nil) != tt.expectErr {
-				t.Errorf("parseDate(%q, %q) error = %v, expectErr %v", tt.dateStr, tt.format, err, tt.expectErr)
-			}
-		})
-	}
-}
+func day(y int, m time.Month, d int) time.Time { return time.Date(y, m, d, 0, 0, 0, 0, time.UTC) }
 
-func TestParseDuration(t *testing.T) {
-	tests := []struct {
-		name      string
-		durStr    string
-		expectErr bool
-		expectMin time.Duration
-		expectMax time.Duration
-	}{
-		{"days", "3d", false, 72 * time.Hour, 72 * time.Hour},
-		{"hours", "4h", false, 4 * time.Hour, 4 * time.Hour},
-		{"weeks", "2w", false, 14 * 24 * time.Hour, 14 * 24 * time.Hour},
-		{"decimal", "1.5d", false, 35 * time.Hour, 37 * time.Hour},
-		{"invalid", "3x", true, 0, 0},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			dur, err := parseDuration(tt.durStr)
-			if (err != nil) != tt.expectErr {
-				t.Errorf("parseDuration(%q) error = %v, expectErr %v", tt.durStr, err, tt.expectErr)
-			}
-			if !tt.expectErr && (dur < tt.expectMin || dur > tt.expectMax) {
-				t.Errorf("parseDuration(%q) = %v, want between %v and %v", tt.durStr, dur, tt.expectMin, tt.expectMax)
-			}
-		})
-	}
-}
-
-func TestParseBasicGantt(t *testing.T) {
-	src := `gantt
-    title Test Chart
+func TestDatesAndDependencies(t *testing.T) {
+	c, err := Parse(`gantt
     dateFormat YYYY-MM-DD
-    section Section1
-        Task A :a1, 2024-01-01, 5d
-        Task B :after a1, 3d
-`
-
-	cfg := &diagram.Config{Theme: theme.Default()}
-	gantt, err := Parse(src, cfg)
+    section A
+    First      :a1, 2024-01-01, 3d
+    Second     :after a1, 2d
+    Third      :a3, 2024-01-10, 2024-01-12
+    Fourth     :4d
+    Until      :u1, 2024-01-01, until a3
+    Both       :after a1 a3, 1w
+    Half       :0.5d
+    Mile       :milestone, m1, after a3, 0d
+    Lenient    :idonly, 1d`, fixedNow)
 	if err != nil {
-		t.Fatalf("Parse failed: %v", err)
+		t.Fatal(err)
 	}
-
-	if gantt.Title != "Test Chart" {
-		t.Errorf("Title = %q, want %q", gantt.Title, "Test Chart")
+	tk := c.Tasks
+	check := func(i int, s, e time.Time) {
+		t.Helper()
+		if !tk[i].Start.Equal(s) || !tk[i].End.Equal(e) {
+			t.Errorf("task %d %q: %v - %v, want %v - %v", i, tk[i].Name, tk[i].Start, tk[i].End, s, e)
+		}
 	}
-
-	if len(gantt.AllTasks) < 2 {
-		t.Errorf("Number of tasks = %d, want >= 2", len(gantt.AllTasks))
+	check(0, day(2024, 1, 1), day(2024, 1, 4))
+	check(1, day(2024, 1, 4), day(2024, 1, 6))
+	check(2, day(2024, 1, 10), day(2024, 1, 12))
+	check(3, day(2024, 1, 12), day(2024, 1, 16))
+	check(4, day(2024, 1, 1), day(2024, 1, 10))
+	check(5, day(2024, 1, 12), day(2024, 1, 19))
+	check(6, day(2024, 1, 19), day(2024, 1, 19).Add(12*time.Hour))
+	if !tk[7].Milestone || !tk[7].Start.Equal(day(2024, 1, 12)) {
+		t.Errorf("milestone %+v", tk[7])
 	}
-}
-
-func TestExcludedDays(t *testing.T) {
-	tests := []struct {
-		name          string
-		day           time.Time
-		excludes      []string
-		weekendStart  string
-		expectExclude bool
-	}{
-		{"Regular weekday", time.Date(2024, 1, 8, 0, 0, 0, 0, time.UTC), []string{}, "saturday", false},
-		{"Saturday with weekends", time.Date(2024, 1, 6, 0, 0, 0, 0, time.UTC), []string{"weekends"}, "saturday", true},
-		{"Sunday with weekends", time.Date(2024, 1, 7, 0, 0, 0, 0, time.UTC), []string{"weekends"}, "saturday", true},
-		{"Specific date", time.Date(2024, 1, 8, 0, 0, 0, 0, time.UTC), []string{"2024-01-08"}, "saturday", true},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := isExcludedDay(tt.day, tt.excludes, tt.weekendStart)
-			if result != tt.expectExclude {
-				t.Errorf("isExcludedDay = %v, want %v", result, tt.expectExclude)
-			}
-		})
+	if tk[8].ID != "idonly" {
+		t.Errorf("lenient id: %q", tk[8].ID)
 	}
 }
 
-func TestRenderGanttExample(t *testing.T) {
-	src := `gantt
-    title Test Gantt
+func TestExcludesAndInclusive(t *testing.T) {
+	c, err := Parse(`gantt
     dateFormat YYYY-MM-DD
-    section Dev
-        Task 1 :a1, 2024-01-01, 5d
-        Task 2 :after a1, 3d
-`
-
-	cfg := &diagram.Config{Theme: theme.Default()}
-	sc, err := Render(src, cfg)
+    excludes weekends, 2024-01-10
+    inclusiveEndDates
+    Work :w, 2024-01-05, 3d
+    Range :2024-01-01, 2024-01-02`, fixedNow)
 	if err != nil {
-		t.Fatalf("Render failed: %v", err)
+		t.Fatal(err)
 	}
-
-	if sc == nil {
-		t.Fatal("Scene is nil")
+	// Fri 5th + 3 working days (Fri, Mon, Tue) skipping the weekend ends at
+	// the start of Wed 10th.
+	if got := c.Tasks[0].End; !got.Equal(day(2024, 1, 10)) {
+		t.Errorf("excludes: end %v", got)
 	}
-
-	if sc.Width <= 0 || sc.Height <= 0 {
-		t.Errorf("Scene size = %gx%g, want > 0", sc.Width, sc.Height)
+	if got := c.Tasks[1].End; !got.Equal(day(2024, 1, 3)) {
+		t.Errorf("inclusive end: %v", got)
 	}
-
-	if len(sc.Items) == 0 {
-		t.Error("Scene has no items")
+	c2, _ := Parse("gantt\nexcludes weekends\nweekend friday\nx :2024-01-01, 1d", fixedNow)
+	if !c2.Excluded(day(2024, 1, 5)) || c2.Excluded(day(2024, 1, 7)) {
+		t.Error("weekend friday")
 	}
 }
 
-func TestGanttWithMilestones(t *testing.T) {
-	// Test milestone positioning and rendering
-	src := `gantt
-    title Gantt with Milestones
-    dateFormat YYYY-MM-DD
-    section Plan
-        Milestone 1 :milestone, m1, 2024-01-15, 0d
-        Task :a1, 2024-01-01, 14d
-        Milestone 2 :milestone, m2, 2024-01-20, 0d
-`
-	cfg := &diagram.Config{Theme: theme.Default()}
-	sc, err := Render(src, cfg)
-	if err != nil {
-		t.Fatalf("Render failed: %v", err)
+func TestFormats(t *testing.T) {
+	if got := DayjsToGo("YYYY-MM-DD HH:mm:ss"); got != "2006-01-02 15:04:05" {
+		t.Errorf("dayjs = %q", got)
 	}
-	if sc.Width <= 0 || sc.Height <= 0 {
-		t.Errorf("Scene size invalid: %gx%g", sc.Width, sc.Height)
+	if got := DayjsToGo("DD/MM/YY [at] h:mm A"); got != "02/01/06 at 3:04 PM" {
+		t.Errorf("dayjs literal = %q", got)
+	}
+	tm := time.Date(2024, 3, 5, 14, 7, 9, 0, time.UTC)
+	for f, want := range map[string]string{
+		"%Y-%m-%d": "2024-03-05", "%b %e": "Mar  5", "%-d %B": "5 March", "%H:%M": "14:07",
+		"%I %p": "02 PM", "%a %j": "Tue 065", "%y%%": "24%",
+	} {
+		if got := Strftime(f, tm); got != want {
+			t.Errorf("strftime %q = %q, want %q", f, got, want)
+		}
+	}
+	c, err := Parse("gantt\ndateFormat DD.MM.YYYY HH:mm\nt :01.02.2024 10:30, 90m", fixedNow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !c.Tasks[0].End.Equal(time.Date(2024, 2, 1, 12, 0, 0, 0, time.UTC)) {
+		t.Errorf("custom format: %v", c.Tasks[0].End)
+	}
+	c, err = Parse("gantt\ndateFormat X\nt :1700000000, 1h", fixedNow)
+	if err != nil || c.Tasks[0].Start.Unix() != 1700000000 {
+		t.Errorf("unix: %v %v", err, c)
 	}
 }
 
-func TestGanttWithDifferentTaskTypes(t *testing.T) {
-	// Test different task states: done, active, crit
-	src := `gantt
-    title Task Types
-    dateFormat YYYY-MM-DD
-    section Work
-        Done Task :done, d1, 2024-01-01, 3d
-        Active Task :active, a1, 2024-01-04, 3d
-        Critical Task :crit, c1, 2024-01-07, 3d
-        Normal Task :n1, 2024-01-10, 3d
-`
-	cfg := &diagram.Config{Theme: theme.Default()}
-	sc, err := Render(src, cfg)
-	if err != nil {
-		t.Fatalf("Render failed: %v", err)
-	}
-	if len(sc.Items) == 0 {
-		t.Error("No items rendered")
+func TestErrors(t *testing.T) {
+	for _, src := range []string{
+		"gantt\nt :x1, 2024-99-99, 1d",
+		"gantt\nno colon here",
+		"gantt\na :a, after b, 1d\nb :b, after a, 1d",
+		"gantt\ntickInterval 3fortnights",
+	} {
+		if _, err := Parse(src, fixedNow); err == nil {
+			t.Errorf("%q: expected error", src)
+		}
 	}
 }
 
-func TestGanttParsingRobustness(t *testing.T) {
-	// Test parser doesn't panic on various prefixes
-	tests := []struct {
-		name string
-		src  string
-	}{
-		{"Just gantt", "gantt"},
-		{"With title", "gantt\ntitle Test"},
-		{"With section", "gantt\nsection S1"},
-		{"Empty lines", "gantt\n\n\ntitle Test\n\n"},
+func TestExamples(t *testing.T) {
+	Now = func() time.Time { return fixedNow }
+	defer func() { Now = time.Now }()
+	files, _ := filepath.Glob("../../../examples/gantt/*.mmd")
+	if len(files) == 0 {
+		t.Fatal("no examples")
 	}
-
-	cfg := &diagram.Config{Theme: theme.Default()}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			_, err := Render(tt.src, cfg)
-			if err != nil {
-				t.Fatalf("Render failed: %v", err)
-			}
-		})
+	for _, f := range files {
+		b, _ := os.ReadFile(f)
+		s := string(b)
+		for i := 0; i <= len(s); i += 5 {
+			func() {
+				defer func() {
+					if r := recover(); r != nil {
+						t.Fatalf("%s prefix %d: %v", f, i, r)
+					}
+				}()
+				_, _ = diagram.Render(s[:i], theme.Default())
+			}()
+		}
+		sc, err := diagram.Render(s, theme.MustGet("dark"))
+		if err != nil {
+			t.Fatalf("%s: %v", f, err)
+		}
+		if sc.Width > 2000 || sc.Width < 400 {
+			t.Errorf("%s: width %v", f, sc.Width)
+		}
+		if testing.Verbose() {
+			t.Logf("%s\n%s", f, devutil.ASCII(sc.Render(scene.RenderOptions{Scale: 1}), 140))
+		}
 	}
 }
