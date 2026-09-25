@@ -57,7 +57,11 @@ type renderJob struct {
 	imgID     int
 	tmux      bool
 	placement Placement // resolved (unicode or direct)
-	top       int       // screen row of the body (direct placements)
+	top       int       // screen row of the body (direct placements, sixel)
+	// sixel: overlay areas left transparent (image pixels) and their
+	// signature
+	mask []image.Rectangle
+	sig  string
 }
 
 // renderResult is the output of a render job.
@@ -67,6 +71,7 @@ type renderResult struct {
 	lines []string // body lines (placeholders or half blocks)
 	raw   string   // escape sequences to write before showing lines (kitty)
 	imgID int
+	sig   string // overlay signature the sixel image was masked for
 	err   error
 }
 
@@ -80,7 +85,7 @@ func viewPixels(cols, rows int, cell CellSize) (float64, float64) {
 
 // run executes the job.
 func (j renderJob) run() (res renderResult) {
-	res = renderResult{gen: j.gen, mode: j.mode, imgID: j.imgID}
+	res = renderResult{gen: j.gen, mode: j.mode, imgID: j.imgID, sig: j.sig}
 	defer func() {
 		if r := recover(); r != nil {
 			res.err = fmt.Errorf("render failed: %v", r)
@@ -107,6 +112,13 @@ func (j renderJob) run() (res renderResult) {
 			res.raw += kittyVirtualPlacement(j.imgID, j.cols, j.rows, j.tmux)
 			res.lines = placeholderGrid(j.imgID, j.cols, j.rows)
 		}
+	case RendererSixel:
+		vp := j.cam.Viewport(pw, ph, j.cam.zoom)
+		img := j.sc.Render(scene.RenderOptions{Scale: j.cam.zoom, Viewport: vp, NoShadows: j.noShadows})
+		// rounding may add a pixel; never paint past the body
+		img = cropRGBA(img, int(pw), int(ph))
+		res.raw = sixelAt(j.top, 0, encodeSixel(img, j.mask))
+		res.lines = blankGrid(j.cols, j.rows)
 	default:
 		// Half blocks: one cell = 1 x 2 "pixels". A terminal pixel maps to
 		// 1/cell.W half-block pixels horizontally.
@@ -118,6 +130,15 @@ func (j renderJob) run() (res renderResult) {
 		res.lines = halfBlocks(img, j.cols, j.rows)
 	}
 	return res
+}
+
+// cropRGBA limits img to at most w x h pixels.
+func cropRGBA(img *image.RGBA, w, h int) *image.RGBA {
+	b := img.Bounds()
+	if b.Dx() <= w && b.Dy() <= h {
+		return img
+	}
+	return img.SubImage(image.Rect(b.Min.X, b.Min.Y, b.Min.X+min(b.Dx(), w), b.Min.Y+min(b.Dy(), h))).(*image.RGBA)
 }
 
 func encodePNG(img image.Image) ([]byte, error) {

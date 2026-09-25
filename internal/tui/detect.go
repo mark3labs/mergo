@@ -2,9 +2,13 @@ package tui
 
 import (
 	"os"
+	"slices"
 	"strings"
+	"time"
 
 	"charm.land/lipgloss/v2"
+	uv "github.com/charmbracelet/ultraviolet"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/term"
 	"golang.org/x/sys/unix"
 )
@@ -45,15 +49,19 @@ const (
 	RendererKitty
 	// RendererHalfBlock uses truecolor half block characters.
 	RendererHalfBlock
+	// RendererSixel uses sixel graphics.
+	RendererSixel
 )
 
-// ParseRenderer parses "auto", "kitty" or "halfblock".
+// ParseRenderer parses "auto", "kitty", "sixel" or "halfblock".
 func ParseRenderer(s string) (Renderer, bool) {
 	switch strings.ToLower(strings.TrimSpace(s)) {
 	case "", "auto":
 		return RendererAuto, true
 	case "kitty", "graphics":
 		return RendererKitty, true
+	case "sixel", "sixels":
+		return RendererSixel, true
 	case "halfblock", "half-block", "half", "blocks", "ansi":
 		return RendererHalfBlock, true
 	}
@@ -66,6 +74,8 @@ func (r Renderer) String() string {
 		return "kitty"
 	case RendererHalfBlock:
 		return "half-block"
+	case RendererSixel:
+		return "sixel"
 	}
 	return "auto"
 }
@@ -169,6 +179,94 @@ func kittyHint(env func(string) string) bool {
 		return false
 	}
 	return false
+}
+
+// sixelHint reports whether the environment suggests a terminal known to
+// display sixel graphics. Used by print mode when the terminal can't be
+// asked (the interactive viewer relies on the device attributes).
+func sixelHint(env func(string) string) bool {
+	if env == nil {
+		env = os.Getenv
+	}
+	term := strings.ToLower(env("TERM"))
+	prog := strings.ToLower(env("TERM_PROGRAM"))
+	for _, t := range []string{"foot", "mlterm", "contour", "yaft", "sixel"} {
+		if strings.Contains(term, t) {
+			return true
+		}
+	}
+	switch prog {
+	case "iterm.app", "mintty", "contour", "blackbox":
+		return true
+	}
+	return false
+}
+
+// hasSixel reports whether primary device attributes advertise sixel
+// graphics (attribute 4).
+func hasSixel(attrs []int) bool {
+	return slices.Contains(attrs, 4)
+}
+
+// querySixel asks the controlling terminal for its primary device
+// attributes and reports whether they include sixel graphics. Like
+// DarkBackground, it only talks to a foreground terminal.
+func querySixel(timeout time.Duration) bool {
+	tty, err := os.OpenFile("/dev/tty", os.O_RDWR, 0)
+	if err != nil {
+		return false
+	}
+	defer func() { _ = tty.Close() }()
+	if !term.IsTerminal(tty.Fd()) || !foreground(tty) {
+		return false
+	}
+	state, err := term.MakeRaw(tty.Fd())
+	if err != nil {
+		return false
+	}
+	defer func() { _ = term.Restore(tty.Fd(), state) }()
+
+	rd, err := uv.NewCancelReader(tty)
+	if err != nil {
+		return false
+	}
+	defer func() { _ = rd.Close() }()
+	done := make(chan struct{})
+	defer close(done)
+	go func() {
+		select {
+		case <-done:
+		case <-time.After(timeout):
+			rd.Cancel()
+		}
+	}()
+	if _, err := tty.WriteString(ansi.RequestPrimaryDeviceAttributes); err != nil {
+		return false
+	}
+
+	pa := ansi.NewParser()
+	var buf [256]byte
+	var st byte
+	for {
+		n, err := rd.Read(buf[:])
+		if err != nil {
+			return false
+		}
+		p := buf[:n]
+		for len(p) > 0 {
+			seq, _, read, ns := ansi.DecodeSequence(p, st, pa)
+			st = ns
+			p = p[read:]
+			if ns != ansi.NormalState || !ansi.HasCsiPrefix(seq) || pa.Command() != ansi.Command('?', 0, 'c') {
+				continue
+			}
+			var attrs []int
+			for _, prm := range pa.Params() {
+				attrs = append(attrs, prm.Param(0))
+			}
+			return hasSixel(attrs)
+		}
+	}
 }
 
 // inTmux reports whether we run inside tmux.

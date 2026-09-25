@@ -2,8 +2,10 @@ package tui
 
 import (
 	"fmt"
+	"image"
 	"os"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -50,6 +52,14 @@ type renderDoneMsg renderResult
 
 type probeTimeoutMsg struct{}
 
+// sixelPaintMsg paints a sixel image once the frame that clears its area
+// has been written.
+type sixelPaintMsg struct {
+	gen int
+	sig string
+	raw string
+}
+
 type pollMsg struct{}
 
 type reloadMsg struct {
@@ -70,6 +80,11 @@ const (
 	renderDebounce = 25 * time.Millisecond
 	pollInterval   = 500 * time.Millisecond
 	probeTimeout   = 1500 * time.Millisecond
+	// sixelSettle is how long to wait before painting a sixel image over
+	// a body that changed in the same update: the renderer writes raw
+	// output before the frame, so painting right away would have the
+	// frame's blank cells erase the image. A few frames at 60 fps.
+	sixelSettle = 40 * time.Millisecond
 )
 
 // Model is the bubbletea model of the viewer.
@@ -99,6 +114,13 @@ type Model struct {
 	// image currently displayed with a direct placement (0 = none).
 	placement Placement
 	shownID   int
+
+	// sixel: sixelOK is set when the device attributes advertise sixel
+	// graphics, sixelSig is the overlay layout the latest sixel render was
+	// requested for and sixelShown whether an image may be on screen.
+	sixelOK    bool
+	sixelSig   string
+	sixelShown bool
 
 	cams    map[int]*camera
 	scenes  map[sceneKey]sceneEntry
@@ -162,6 +184,9 @@ func NewModel(paths []string, diagrams []*Diagram, opts Options) *Model {
 	case RendererKitty:
 		m.mode = RendererKitty
 		m.kittyOK = true
+	case RendererSixel:
+		m.mode = RendererSixel
+		m.sixelOK = true
 	case RendererHalfBlock:
 		m.mode = RendererHalfBlock
 	default:
@@ -198,6 +223,19 @@ func (m *Model) poll() tea.Cmd {
 
 // Update implements tea.Model.
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	model, cmd := m.update(msg)
+	// A sixel image is part of the cell contents: when overlays appear,
+	// move or disappear it has to be painted again around them.
+	if m.mode == RendererSixel && !m.probing && m.width > 0 && m.height > 0 {
+		if sig := m.overlaySig(); sig != m.sixelSig {
+			m.sixelSig = sig
+			cmd = tea.Batch(cmd, m.requestRender())
+		}
+	}
+	return model, cmd
+}
+
+func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
@@ -229,6 +267,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case uv.PrimaryDeviceAttributesEvent:
+		if hasSixel(msg) {
+			m.sixelOK = true
+		}
 		if m.probing {
 			m.finishProbe()
 			return m, m.requestRender()
@@ -263,10 +304,21 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.gen <= m.appliedGen {
 			return m, nil
 		}
+		if msg.mode != m.mode {
+			return m, nil // rendered for a renderer that was switched away from
+		}
+		if msg.mode == RendererSixel && msg.err == nil && msg.sig != m.overlaySig() {
+			// stale: painting it would cover overlays (a newer render
+			// is pending)
+			return m, nil
+		}
 		m.appliedGen = msg.gen
 		m.renderErr = msg.err
 		if msg.err != nil {
 			return m, nil
+		}
+		if msg.mode == RendererSixel {
+			return m, m.applySixel(renderResult(msg))
 		}
 		m.body = msg.lines
 		m.bodyMode = msg.mode
@@ -280,6 +332,13 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if raw != "" {
 			return m, tea.Raw(raw)
+		}
+		return m, nil
+
+	case sixelPaintMsg:
+		if msg.gen == m.appliedGen && m.mode == RendererSixel && msg.sig == m.overlaySig() {
+			m.sixelShown = true
+			return m, tea.Raw(msg.raw)
 		}
 		return m, nil
 
@@ -352,11 +411,41 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m *Model) finishProbe() {
 	m.probing = false
-	if m.kittyOK {
+	switch {
+	case m.kittyOK:
 		m.mode = RendererKitty
-	} else {
+	case m.sixelOK:
+		m.mode = RendererSixel
+	default:
 		m.mode = RendererHalfBlock
 	}
+}
+
+// applySixel shows a finished sixel render. The image is painted over a
+// grid of blank cells; if the body showed something else until now, the
+// frame replacing it with blanks must reach the terminal first.
+func (m *Model) applySixel(res renderResult) tea.Cmd {
+	blank := m.bodyMode == RendererSixel && len(m.body) == len(res.lines) &&
+		(len(m.body) == 0 || m.body[0] == res.lines[0])
+	m.body = res.lines
+	m.bodyMode = RendererSixel
+	if blank {
+		m.sixelShown = true
+		return tea.Raw(res.raw)
+	}
+	gen, sig, raw := res.gen, res.sig, res.raw
+	return tea.Tick(sixelSettle, func(time.Time) tea.Msg { return sixelPaintMsg{gen: gen, sig: sig, raw: raw} })
+}
+
+// eraseSixel removes a sixel image from the body (the cell renderer
+// doesn't know about it), sparing the overlays.
+func (m *Model) eraseSixel() tea.Cmd {
+	if !m.sixelShown {
+		return nil
+	}
+	m.sixelShown = false
+	cols, rows := m.bodySize()
+	return tea.Raw(eraseCells(m.bodyTop(), cols, rows, m.overlayRects()))
 }
 
 func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
@@ -571,7 +660,7 @@ func (m *Model) startRender() tea.Cmd {
 		// nothing to show: a direct placement would otherwise linger over
 		// the error panel / placeholder text
 		m.body = nil
-		return m.hideDirect()
+		return tea.Batch(m.hideDirect(), m.eraseSixel())
 	}
 	cols, rows := m.bodySize()
 	pw, ph := viewPixels(cols, rows, m.cell)
@@ -592,8 +681,18 @@ func (m *Model) startRender() tea.Cmd {
 		placement: m.placement,
 		top:       m.bodyTop(),
 	}
-	if m.mode == RendererKitty {
+	switch m.mode {
+	case RendererKitty:
 		job.imgID = m.nextImageID()
+	case RendererSixel:
+		job.sig = m.overlaySig()
+		m.sixelSig = job.sig
+		top := m.bodyTop()
+		for _, r := range m.overlayRects() {
+			job.mask = append(job.mask, image.Rect(
+				r.Min.X*m.cell.W, (r.Min.Y-top)*m.cell.H,
+				r.Max.X*m.cell.W, (r.Max.Y-top)*m.cell.H))
+		}
 	}
 	return func() tea.Msg { return renderDoneMsg(job.run()) }
 }
@@ -606,20 +705,33 @@ func (m *Model) switchDiagram(delta int) tea.Cmd {
 	return tea.Batch(m.ensureScene(), m.requestRender())
 }
 
+// toggleRenderer cycles through the renderers the terminal supports:
+// kitty, sixel and half blocks.
 func (m *Model) toggleRenderer() tea.Cmd {
 	if m.probing {
 		return nil
 	}
-	if m.mode == RendererKitty {
-		m.mode = RendererHalfBlock
-		clean := m.cleanup()
-		return tea.Batch(tea.Raw(clean), m.requestRender(), m.showToast("renderer: half-block"))
+	var modes []Renderer
+	if m.kittyOK {
+		modes = append(modes, RendererKitty)
 	}
-	if !m.kittyOK {
-		return m.showError("kitty graphics not supported by this terminal")
+	if m.sixelOK {
+		modes = append(modes, RendererSixel)
 	}
-	m.mode = RendererKitty
-	return tea.Batch(m.requestRender(), m.showToast("renderer: kitty"))
+	modes = append(modes, RendererHalfBlock)
+	if len(modes) == 1 {
+		return m.showError("no terminal graphics support (kitty or sixel)")
+	}
+	next := modes[(slices.Index(modes, m.mode)+1)%len(modes)]
+	var cmds []tea.Cmd
+	switch m.mode {
+	case RendererKitty:
+		cmds = append(cmds, tea.Raw(m.cleanup()))
+	case RendererSixel:
+		cmds = append(cmds, m.eraseSixel())
+	}
+	m.mode = next
+	return tea.Batch(append(cmds, m.requestRender(), m.showToast("renderer: "+next.String()))...)
 }
 
 // cleanup returns escape sequences deleting all transmitted images.
@@ -763,12 +875,28 @@ func (m *Model) render() string {
 		lipgloss.NewLayer(m.bodyView(cols, rows)).X(0).Y(m.bodyTop()),
 		lipgloss.NewLayer(m.statusView()).X(0).Y(m.height - 1),
 	}
+	for _, o := range m.overlays() {
+		layers = append(layers, lipgloss.NewLayer(o.content).X(o.x).Y(o.y).Z(o.z))
+	}
+	canvas := lipgloss.NewCanvas(m.width, m.height)
+	return canvas.Compose(lipgloss.NewCompositor(layers...)).Render()
+}
+
+// overlay is a panel drawn over the body.
+type overlay struct {
+	content string
+	x, y, z int
+}
+
+// overlays returns the panels currently drawn over the body: error panel,
+// toast, help and theme picker.
+func (m *Model) overlays() []overlay {
+	cols, rows := m.bodySize()
+	var out []overlay
 	if err := m.displayError(); err != nil {
 		box := m.errorView(err, cols)
-		bw, bh := lipgloss.Width(box), lipgloss.Height(box)
-		layers = append(layers, lipgloss.NewLayer(box).
-			X(max((cols-bw)/2, 0)).
-			Y(m.bodyTop()+max(rows-bh-1, 0)).Z(2))
+		bh := lipgloss.Height(box)
+		out = append(out, overlay{box, max((cols-lipgloss.Width(box))/2, 0), m.bodyTop() + max(rows-bh-1, 0), 2})
 	}
 	if m.toast != "" {
 		st := m.st.toast
@@ -776,23 +904,49 @@ func (m *Model) render() string {
 			st = m.st.toastErr
 		}
 		t := st.Render(m.toast)
-		layers = append(layers, lipgloss.NewLayer(t).X(max(cols-lipgloss.Width(t)-1, 0)).Y(m.bodyTop()+1).Z(3))
+		out = append(out, overlay{t, max(cols-lipgloss.Width(t)-1, 0), m.bodyTop() + 1, 3})
 	}
 	if m.showHelp {
 		h := m.st.helpBox.Render(fillPanel(m.help.FullHelpView(m.keys.FullHelp()), m.st.panelBg))
-		layers = append(layers, lipgloss.NewLayer(h).
-			X(max((cols-lipgloss.Width(h))/2, 0)).
-			Y(m.bodyTop()+max((rows-lipgloss.Height(h))/2, 0)).Z(4))
+		out = append(out, overlay{h,
+			max((cols-lipgloss.Width(h))/2, 0),
+			m.bodyTop() + max((rows-lipgloss.Height(h))/2, 0), 4})
 	}
 	if m.picker.open {
 		box := m.themePickerView(rows)
 		bw, bh := lipgloss.Width(box), lipgloss.Height(box)
 		x, y := max((cols-bw)/2, 0), m.bodyTop()+max((rows-bh)/2, 0)
 		m.placeThemePicker(x, y, bw, bh)
-		layers = append(layers, lipgloss.NewLayer(box).X(x).Y(y).Z(5))
+		out = append(out, overlay{box, x, y, 5})
 	}
-	canvas := lipgloss.NewCanvas(m.width, m.height)
-	return canvas.Compose(lipgloss.NewCompositor(layers...)).Render()
+	return out
+}
+
+// overlayRects returns the screen cells covered by overlays, clipped to
+// the body.
+func (m *Model) overlayRects() []image.Rectangle {
+	cols, rows := m.bodySize()
+	body := image.Rect(0, m.bodyTop(), cols, m.bodyTop()+rows)
+	var out []image.Rectangle
+	for _, o := range m.overlays() {
+		r := image.Rect(o.x, o.y, o.x+lipgloss.Width(o.content), o.y+lipgloss.Height(o.content)).Intersect(body)
+		if !r.Empty() {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// overlaySig identifies the overlay layout (and the body size), so that a
+// sixel image is repainted whenever the cells it must spare change.
+func (m *Model) overlaySig() string {
+	cols, rows := m.bodySize()
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "%dx%d", cols, rows)
+	for _, r := range m.overlayRects() {
+		fmt.Fprintf(&sb, ";%d,%d,%d,%d", r.Min.X, r.Min.Y, r.Max.X, r.Max.Y)
+	}
+	return sb.String()
 }
 
 func (m *Model) displayError() error {

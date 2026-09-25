@@ -188,13 +188,13 @@ func TestCamera(t *testing.T) {
 }
 
 func TestParseRenderer(t *testing.T) {
-	for in, want := range map[string]Renderer{"": RendererAuto, "kitty": RendererKitty, "halfblock": RendererHalfBlock, "half-block": RendererHalfBlock} {
+	for in, want := range map[string]Renderer{"": RendererAuto, "kitty": RendererKitty, "halfblock": RendererHalfBlock, "half-block": RendererHalfBlock, "sixel": RendererSixel} {
 		if got, ok := ParseRenderer(in); !ok || got != want {
 			t.Errorf("%q -> %v %v", in, got, ok)
 		}
 	}
-	if _, ok := ParseRenderer("sixel"); ok {
-		t.Error("sixel should be rejected")
+	if _, ok := ParseRenderer("ascii-art"); ok {
+		t.Error("unknown renderer accepted")
 	}
 	env := map[string]string{"TERM": "xterm-kitty"}
 	if !kittyHint(func(k string) string { return env[k] }) {

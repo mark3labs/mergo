@@ -60,8 +60,8 @@ func rootCmd() *cobra.Command {
 		Use:   "mergo [file ...]",
 		Short: "Beautiful Mermaid diagrams in your terminal",
 		Long: `mergo renders Mermaid diagrams natively in Go — no browser, no Node.js —
-and displays them as real graphics using the kitty graphics protocol, falling
-back to true-color half blocks on other terminals.
+and displays them as real graphics using the kitty graphics protocol or sixel,
+falling back to true-color half blocks on other terminals.
 
 Inputs can be Mermaid files (.mmd, .mermaid), Markdown files (every
 ` + "```mermaid" + ` block becomes a diagram) or standard input.`,
@@ -91,7 +91,7 @@ Inputs can be Mermaid files (.mmd, .mermaid), Markdown files (every
 	fl := cmd.Flags()
 	fl.StringVarP(&f.theme, "theme", "t", "", "diagram theme for this run ("+strings.Join(theme.Names(), ", ")+"); the saved theme is used by default")
 	fl.StringVar(&f.background, "background", "auto", "theme variant: auto (follow the terminal background), dark or light")
-	fl.StringVarP(&f.renderer, "renderer", "r", "auto", "image renderer: auto, kitty or halfblock")
+	fl.StringVarP(&f.renderer, "renderer", "r", "auto", "image renderer: auto, kitty, sixel or halfblock")
 	fl.StringVar(&f.placement, "kitty-placement", "auto", "kitty image placement: auto, unicode (placeholders) or direct (zellij, WezTerm, Konsole)")
 	fl.StringVarP(&f.output, "output", "o", "", "export the diagram as PNG to this path and exit (- for stdout)")
 	fl.BoolVarP(&f.print, "print", "p", false, "print the diagram inline and exit")
@@ -110,7 +110,7 @@ Inputs can be Mermaid files (.mmd, .mermaid), Markdown files (every
 		return []string{"auto", "dark", "light"}, cobra.ShellCompDirectiveNoFileComp
 	})
 	_ = cmd.RegisterFlagCompletionFunc("renderer", func(*cobra.Command, []string, string) ([]string, cobra.ShellCompDirective) {
-		return []string{"auto", "kitty", "halfblock"}, cobra.ShellCompDirectiveNoFileComp
+		return []string{"auto", "kitty", "sixel", "halfblock"}, cobra.ShellCompDirectiveNoFileComp
 	})
 	_ = cmd.RegisterFlagCompletionFunc("kitty-placement", func(*cobra.Command, []string, string) ([]string, cobra.ShellCompDirective) {
 		return []string{"auto", "unicode", "direct"}, cobra.ShellCompDirectiveNoFileComp
@@ -236,7 +236,7 @@ func run(ctx context.Context, args []string, f flags) error {
 	}
 	rend, ok := tui.ParseRenderer(f.renderer)
 	if !ok {
-		return fmt.Errorf("unknown renderer %q (want auto, kitty or halfblock)", f.renderer)
+		return fmt.Errorf("unknown renderer %q (want auto, kitty, sixel or halfblock)", f.renderer)
 	}
 	placement, ok := tui.ParsePlacement(f.placement)
 	if !ok {

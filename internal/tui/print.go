@@ -7,6 +7,7 @@ import (
 	"math"
 	"os"
 	"strings"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/term"
@@ -36,6 +37,9 @@ type PrintOptions struct {
 	MaxHeight int
 }
 
+// sixelQueryTimeout bounds the device attributes query of print mode.
+const sixelQueryTimeout = 500 * time.Millisecond
+
 // Print renders a diagram inline to w (like cat for diagrams).
 func Print(w io.Writer, d *Diagram, o PrintOptions) error {
 	if _, err := theme.Get(o.Theme, o.Dark); err != nil {
@@ -55,9 +59,12 @@ func Print(w io.Writer, d *Diagram, o PrintOptions) error {
 	cell := terminalCellSize()
 	mode := o.Renderer
 	if mode == RendererAuto {
-		if graphicsHint(nil) {
+		switch {
+		case graphicsHint(nil):
 			mode = RendererKitty
-		} else {
+		case sixelHint(nil) || (term.IsTerminal(os.Stdout.Fd()) && querySixel(sixelQueryTimeout)):
+			mode = RendererSixel
+		default:
 			mode = RendererHalfBlock
 		}
 	}
@@ -77,6 +84,13 @@ func Print(w io.Writer, d *Diagram, o PrintOptions) error {
 	}
 
 	switch mode {
+	case RendererSixel:
+		img := sc.Render(scene.RenderOptions{Scale: zoom, NoShadows: o.NoShadows})
+		img = cropRGBA(img, cols*cell.W, rows*cell.H)
+		// the terminal moves the cursor below the image (scrolling as
+		// needed); make sure the prompt starts on a fresh line
+		_, err := fmt.Fprint(w, encodeSixel(img, nil)+"\n")
+		return err
 	case RendererKitty:
 		img := sc.Render(scene.RenderOptions{Scale: zoom, NoShadows: o.NoShadows})
 		data, err := encodePNG(img)
