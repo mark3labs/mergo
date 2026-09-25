@@ -45,6 +45,17 @@ Built with the Charm stack: [Bubble Tea v2](https://github.com/charmbracelet/bub
 
 ## Install
 
+Prebuilt binaries for Linux and macOS (amd64, arm64). The script verifies
+the release checksum and installs to `~/.local/bin` by default:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/mark3labs/mergo/master/install.sh | bash
+# a specific version, or another directory:
+curl -fsSL https://raw.githubusercontent.com/mark3labs/mergo/master/install.sh | bash -s -- --version v0.1.0 --bin-dir /usr/local/bin
+```
+
+Or with Go:
+
 ```sh
 go install github.com/mark3labs/mergo@latest
 ```
@@ -164,7 +175,8 @@ is on by default), and the host terminal must support it.
 ## Development
 
 ```sh
-go test ./...
+go test -race ./...
+golangci-lint run ./...
 go run ./cmd/mmdpng -ascii 140 examples/flowchart/cicd.mmd   # ASCII preview of a render
 go run ./cmd/mmdpng -theme nord examples/state/concurrency.mmd out.png
 ```

@@ -21,7 +21,14 @@ import (
 	"github.com/mark3labs/mergo/internal/tui"
 )
 
-var version = "dev"
+// version and commit can be set at build time with -ldflags "-X
+// main.version=... -X main.commit=..." (GoReleaser does). When empty, fang
+// reports the module version from the build info (e.g. for go install
+// ...@vX.Y.Z).
+var (
+	version = ""
+	commit  = ""
+)
 
 type flags struct {
 	theme      string
@@ -42,7 +49,7 @@ type flags struct {
 func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
-	if err := fang.Execute(ctx, rootCmd(), fang.WithVersion(version)); err != nil {
+	if err := fang.Execute(ctx, rootCmd(), fang.WithVersion(version), fang.WithCommit(commit)); err != nil {
 		os.Exit(1)
 	}
 }

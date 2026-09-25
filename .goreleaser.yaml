@@ -1,0 +1,65 @@
+version: 2
+
+project_name: mergo
+
+builds:
+  - main: .
+    binary: mergo
+    env:
+      - CGO_ENABLED=0
+    # mergo rasterizes diagrams in pure Go (fogleman/gg, x/image fonts) and
+    # talks to the terminal through pure-Go code, so it cross-compiles
+    # cleanly. Windows is left out: internal/tui/detect.go uses unix ioctls
+    # (TIOCGPGRP, TIOCGWINSZ) and does not build there yet.
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    # main.version and main.commit feed fang's --version output.
+    ldflags:
+      - -s -w -X main.version={{.Version}} -X main.commit={{.Commit}}
+
+archives:
+  # install.sh expects goreleaser's default archive name,
+  # mergo_<version>_<os>_<arch>.tar.gz, so keep the default naming.
+  # scripts/install_test.go fails if a custom archive name is configured.
+  - formats: [tar.gz]
+    files:
+      - README.md
+
+checksum:
+  name_template: "{{ .ProjectName }}_{{ .Version }}_checksums.txt"
+  algorithm: sha256
+
+# The release body is built from Conventional Commit subjects, grouped by
+# type.
+changelog:
+  sort: asc
+  abbrev: 7
+  filters:
+    exclude:
+      - "^chore"
+      - "^ci"
+      - "^test"
+      - "^Merge "
+  groups:
+    - title: Features
+      regexp: '^feat(\(.+\))?!?:'
+      order: 0
+    - title: Bug fixes
+      regexp: '^fix(\(.+\))?!?:'
+      order: 1
+    - title: Performance
+      regexp: '^perf(\(.+\))?!?:'
+      order: 2
+    - title: Documentation
+      regexp: '^docs(\(.+\))?!?:'
+      order: 3
+    - title: Other changes
+      order: 999
+
+release:
+  draft: false
+  prerelease: auto

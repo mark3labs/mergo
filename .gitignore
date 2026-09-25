@@ -1,3 +1,4 @@
 /mergo
 /mmdpng
 *.png
+dist/
