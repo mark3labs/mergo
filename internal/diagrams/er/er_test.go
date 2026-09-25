@@ -1,197 +1,102 @@
 package er
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
+	"github.com/mark3labs/mergo/internal/devutil"
 	"github.com/mark3labs/mergo/internal/diagram"
+	"github.com/mark3labs/mergo/internal/scene"
 	"github.com/mark3labs/mergo/internal/theme"
 )
 
-func TestParseSimpleEntity(t *testing.T) {
-	src := `erDiagram
-	CUSTOMER
-	`
-	doc, err := Parse(src)
+func TestParse(t *testing.T) {
+	d, err := Parse(`erDiagram
+    direction LR
+    CUSTOMER ||--o{ ORDER : places
+    ORDER ||--|{ LINE-ITEM : contains
+    A |o..o| B : "maybe"
+    C }|--|| D : x
+    E one or more optionally to zero or more F : words
+    "Quoted Name" ||--|| G : q
+    P["Person record"] {
+        string name PK "the name"
+        int age
+        uuid org_id PK, FK
+        list~string~ tags
+    }
+    classDef hot fill:#f00
+    class P hot`)
 	if err != nil {
-		t.Fatalf("parse error: %v", err)
+		t.Fatal(err)
 	}
-	if len(doc.Entities) != 1 {
-		t.Errorf("expected 1 entity, got %d", len(doc.Entities))
+	if d.Dir != "LR" || len(d.Rels) != 6 {
+		t.Fatalf("dir %s rels %d", d.Dir, len(d.Rels))
 	}
-	ent, ok := doc.Entities["CUSTOMER"]
-	if !ok {
-		t.Fatal("CUSTOMER entity not found")
+	r := d.Rels[0]
+	if r.FromCard != ExactlyOne || r.ToCard != ZeroOrMore || !r.Identifying || r.Label != "places" {
+		t.Errorf("rel0 %+v", r)
 	}
-	if ent.Label != "CUSTOMER" {
-		t.Errorf("expected label CUSTOMER, got %q", ent.Label)
+	if r := d.Rels[2]; r.FromCard != ZeroOrOne || r.ToCard != ZeroOrOne || r.Identifying || r.Label != "maybe" {
+		t.Errorf("rel2 %+v", r)
 	}
-}
-
-func TestParseEntityWithLabel(t *testing.T) {
-	src := `erDiagram
-	CUSTOMER["Customer Entity"]
-	`
-	doc, err := Parse(src)
-	if err != nil {
-		t.Fatalf("parse error: %v", err)
+	if r := d.Rels[3]; r.FromCard != OneOrMore || r.ToCard != ExactlyOne {
+		t.Errorf("rel3 %+v", r)
 	}
-	ent, ok := doc.Entities["CUSTOMER"]
-	if !ok {
-		t.Fatal("CUSTOMER entity not found")
+	if r := d.Rels[4]; r.FromCard != OneOrMore || r.ToCard != ZeroOrMore || r.Identifying {
+		t.Errorf("rel4 %+v", r)
 	}
-	if ent.Label != "Customer Entity" {
-		t.Errorf("expected label 'Customer Entity', got %q", ent.Label)
+	if _, ok := d.Entities["Quoted Name"]; !ok {
+		t.Error("quoted entity")
 	}
-}
-
-func TestParseEntityWithAttributes(t *testing.T) {
-	src := `erDiagram
-	CUSTOMER { int id PK, string name, string email }
-	`
-	doc, err := Parse(src)
-	if err != nil {
-		t.Fatalf("parse error: %v", err)
+	p := d.Entities["P"]
+	if p.Label != "Person record" || len(p.Attrs) != 4 || p.Classes[0] != "hot" {
+		t.Fatalf("P = %+v", p)
 	}
-	ent, ok := doc.Entities["CUSTOMER"]
-	if !ok {
-		t.Fatal("CUSTOMER entity not found")
+	if a := p.Attrs[0]; a.Name != "name" || a.Keys[0] != "PK" || a.Comment != "the name" {
+		t.Errorf("attr0 %+v", a)
 	}
-	if len(ent.Attrs) != 3 {
-		t.Errorf("expected 3 attributes, got %d", len(ent.Attrs))
+	if a := p.Attrs[2]; len(a.Keys) != 2 || a.Keys[1] != "FK" {
+		t.Errorf("attr2 %+v", a)
 	}
-	if ent.Attrs[0].Type != "int" || ent.Attrs[0].Name != "id" {
-		t.Errorf("first attribute wrong: %v", ent.Attrs[0])
+	if p.Attrs[3].Type != "list<string>" {
+		t.Errorf("generic type %q", p.Attrs[3].Type)
 	}
-}
-
-func TestParseRelationship(t *testing.T) {
-	src := `erDiagram
-	CUSTOMER
-	ORDER
-	CUSTOMER ||--o{ ORDER : "places"
-	`
-	doc, err := Parse(src)
-	if err != nil {
-		t.Fatalf("parse error: %v", err)
-	}
-	if len(doc.Relationships) != 1 {
-		t.Errorf("expected 1 relationship, got %d", len(doc.Relationships))
-	}
-	rel := doc.Relationships[0]
-	if rel.From != "CUSTOMER" || rel.To != "ORDER" {
-		t.Errorf("relationship endpoints wrong: %s -> %s", rel.From, rel.To)
-	}
-	if rel.FromCard != CardExactlyOne || rel.ToCard != CardZeroOrMore {
-		t.Errorf("cardinalities wrong: from=%d, to=%d", rel.FromCard, rel.ToCard)
-	}
-	if rel.Label != "places" {
-		t.Errorf("label wrong: %q", rel.Label)
-	}
-}
-
-func TestParseCardinality(t *testing.T) {
-	tests := []struct {
-		s    string
-		want Cardinality
-	}{
-		{"||", CardExactlyOne},
-		{"|o", CardZeroOrOne},
-		{"o|", CardZeroOrOne},
-		{"}|", CardOneOrMore},
-		{"|{", CardOneOrMore},
-		{"}o", CardZeroOrMore},
-		{"o{", CardZeroOrMore},
-	}
-	for _, tt := range tests {
-		got := parseCardinality(tt.s)
-		if got != tt.want {
-			t.Errorf("parseCardinality(%q) = %d, want %d", tt.s, got, tt.want)
+	for _, bad := range []string{"A {\nint", "A ||--o{", "A {\nthis is not ok at all x\n}"} {
+		if _, err := Parse("erDiagram\n" + bad); err == nil {
+			t.Errorf("%q: expected error", bad)
 		}
 	}
 }
 
-func TestParseCardinalityWord(t *testing.T) {
-	tests := []struct {
-		s    string
-		want Cardinality
-	}{
-		{"only one", CardExactlyOne},
-		{"one or zero", CardZeroOrOne},
-		{"zero or more", CardZeroOrMore},
-		{"one or more", CardOneOrMore},
+func TestExamples(t *testing.T) {
+	files, _ := filepath.Glob("../../../examples/er/*.mmd")
+	if len(files) == 0 {
+		t.Fatal("no examples")
 	}
-	for _, tt := range tests {
-		got := parseCardinalityWord(tt.s)
-		if got != tt.want {
-			t.Errorf("parseCardinalityWord(%q) = %d, want %d", tt.s, got, tt.want)
+	for _, f := range files {
+		b, _ := os.ReadFile(f)
+		s := string(b)
+		for i := 0; i <= len(s); i += 4 {
+			func() {
+				defer func() {
+					if r := recover(); r != nil {
+						t.Fatalf("%s prefix %d: %v", f, i, r)
+					}
+				}()
+				_, _ = diagram.Render(s[:i], theme.Default())
+			}()
 		}
-	}
-}
-
-func TestParseDirection(t *testing.T) {
-	src := `erDiagram
-	direction LR
-	CUSTOMER
-	ORDER
-	`
-	doc, err := Parse(src)
-	if err != nil {
-		t.Fatalf("parse error: %v", err)
-	}
-	if doc.Direction != "LR" {
-		t.Errorf("direction = %q, want LR", doc.Direction)
-	}
-}
-
-func TestParseTitle(t *testing.T) {
-	src := `erDiagram
-	title Customer Order Relationship
-	CUSTOMER
-	`
-	doc, err := Parse(src)
-	if err != nil {
-		t.Fatalf("parse error: %v", err)
-	}
-	if doc.Title != "Customer Order Relationship" {
-		t.Errorf("title = %q, want 'Customer Order Relationship'", doc.Title)
-	}
-}
-
-func TestRenderBasicER(t *testing.T) {
-	src := `erDiagram
-	CUSTOMER
-	ORDER
-	CUSTOMER ||--o{ ORDER : "places"
-	`
-	cfg := &diagram.Config{Theme: theme.Default()}
-	sc, err := Render(src, cfg)
-	if err != nil {
-		t.Fatalf("render error: %v", err)
-	}
-	if sc.Width <= 0 || sc.Height <= 0 {
-		t.Logf("scene dimensions: %fx%f", sc.Width, sc.Height)
-		t.Logf("items: %d", len(sc.Items))
-		t.Errorf("scene dimensions invalid")
-	}
-	if len(sc.Items) == 0 {
-		t.Error("no items rendered")
-	}
-}
-
-func TestRenderERWithAttributes(t *testing.T) {
-	src := `erDiagram
-	CUSTOMER { int id PK, string name }
-	ORDER { int id PK, int customer_id FK }
-	CUSTOMER ||--o{ ORDER : ""
-	`
-	cfg := &diagram.Config{Theme: theme.Default()}
-	sc, err := Render(src, cfg)
-	if err != nil {
-		t.Fatalf("render error: %v", err)
-	}
-	if sc.Width <= 0 || sc.Height <= 0 {
-		t.Logf("scene dimensions: %fx%f", sc.Width, sc.Height)
-		t.Logf("items: %d", len(sc.Items))
-		t.Errorf("scene dimensions invalid")
+		sc, err := diagram.Render(s, theme.MustGet("dark"))
+		if err != nil {
+			t.Fatalf("%s: %v", f, err)
+		}
+		if sc.Width < 100 || sc.Height < 100 {
+			t.Errorf("%s: too small %vx%v", f, sc.Width, sc.Height)
+		}
+		if testing.Verbose() {
+			t.Logf("%s\n%s", f, devutil.ASCII(sc.Render(scene.RenderOptions{Scale: 1}), 120))
+		}
 	}
 }
