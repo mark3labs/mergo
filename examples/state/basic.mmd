@@ -1,0 +1,9 @@
+---
+title: Simple State Machine
+---
+stateDiagram-v2
+[*] --> Still
+Still --> Moving
+Moving --> Still
+Moving --> Crash
+Crash --> [*]

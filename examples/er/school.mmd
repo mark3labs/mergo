@@ -1,0 +1,26 @@
+erDiagram
+    SCHOOL ||--|{ STUDENT : enrolls
+    STUDENT }o--|| CLASS : takes
+    CLASS }o--|| TEACHER : "taught by"
+    SCHOOL {
+        int id PK
+        string name
+        string address
+    }
+    STUDENT {
+        int id PK
+        int school_id FK
+        string name
+        int grade
+    }
+    CLASS {
+        int id PK
+        int teacher_id FK
+        string subject
+        string room
+    }
+    TEACHER {
+        int id PK
+        string name
+        string department
+    }

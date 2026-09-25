@@ -1,0 +1,32 @@
+---
+title: Abstract Classes and Interfaces
+---
+classDiagram
+class Shape <<abstract>> {
+  #float x
+  #float y
+  +draw()* void
+  +getArea()* float
+}
+
+class Circle {
+  -float radius
+  +draw() void
+  +getArea() float
+}
+
+class Rectangle {
+  -float width
+  -float height
+  +draw() void
+  +getArea() float
+}
+
+class Serializable <<interface>> {
+  +serialize() String
+}
+
+Shape <|-- Circle
+Shape <|-- Rectangle
+Serializable <|.. Circle
+Serializable <|.. Rectangle

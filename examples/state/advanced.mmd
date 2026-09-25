@@ -1,0 +1,19 @@
+---
+title: Choice and Fork
+---
+stateDiagram-v2
+state if_state <<choice>>
+state fork_state <<fork>>
+state join_state <<join>>
+
+[*] --> Check
+Check --> if_state
+if_state --> ProcessA : if positive
+if_state --> ProcessB : if negative
+ProcessA --> fork_state
+ProcessB --> fork_state
+fork_state --> Task1
+fork_state --> Task2
+Task1 --> join_state
+Task2 --> join_state
+join_state --> [*]

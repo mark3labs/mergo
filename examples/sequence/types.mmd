@@ -1,0 +1,8 @@
+sequenceDiagram
+    participant API@{"type": "boundary"}
+    participant DB@{"type": "database"}
+    participant Cache@{"type": "queue"}
+    API->>Cache: Store data
+    Cache-->>API: Ack
+    API->>DB: Query
+    DB-->>API: Result

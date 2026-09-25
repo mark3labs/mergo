@@ -1,0 +1,25 @@
+gantt
+    title Project Timeline with Milestones and Critical Path
+    dateFormat YYYY-MM-DD
+    excludes weekends
+    weekend friday
+    
+    section Planning
+        Define requirements :des1, 2024-01-08, 5d
+        Approval :des2, after des1, 2d
+        
+    section Development
+        Architecture design :crit, arc1, after des2, 3d
+        Backend development :crit, backend, after arc1, 10d
+        Frontend development :front, after arc1, 8d
+        Integration :crit, integ, after backend front, 3d
+        
+    section Testing
+        Unit testing :active, unit, after integ, 4d
+        QA testing :qa, after unit, 5d
+        UAT :uat, after qa, 3d
+        Bug fixes :bug, after uat, 2d
+        
+    section Release
+        Deployment prep :done, deploy, 2024-02-28, 1d
+        Launch :milestone, launch, after bug, 0d

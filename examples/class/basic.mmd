@@ -1,0 +1,23 @@
+---
+title: Simple Class Hierarchy
+---
+classDiagram
+class Animal {
+  +int age
+  +string gender
+  +isMammal() bool
+  +mate()
+}
+
+class Dog {
+  +string breed
+  +bark()
+}
+
+class Cat {
+  +string color
+  +meow()
+}
+
+Animal <|-- Dog
+Animal <|-- Cat

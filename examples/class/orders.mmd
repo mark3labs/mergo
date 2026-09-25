@@ -1,0 +1,31 @@
+---
+title: Order Management System
+---
+classDiagram
+class Customer {
+  -int id
+  -string name
+  -string email
+  +placeOrder() Order
+  +getOrders() List
+}
+
+class Order {
+  -int id
+  -date createdAt
+  +total() Money
+  +ship()
+}
+
+class LineItem {
+  -int quantity
+  -double price
+}
+
+class Payment <<interface>> {
+  +authorize() bool
+}
+
+Customer "1" --> "*" Order : places
+Order "1" *-- "*" LineItem : contains
+Order --> Payment : settled by

@@ -1,0 +1,26 @@
+---
+title: Relationships and Cardinality
+---
+classDiagram
+class Company {
+  -string name
+  +hire()
+}
+
+class Employee {
+  -int id
+  -string name
+  +work()
+}
+
+class Department {
+  -string name
+}
+
+class Manager <<interface>> {
+  +manage()
+}
+
+Company "1" *-- "0..*" Employee : employs
+Employee "0..*" --> "1" Department : works in
+Manager <|.. Employee

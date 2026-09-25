@@ -1,0 +1,44 @@
+flowchart TB
+    subgraph FE["Frontend"]
+        UI["Web UI<br/>React"]
+        Cache["Cache<br/>LocalStorage"]
+    end
+    
+    subgraph API["API Layer"]
+        Gateway["API Gateway"]
+        Auth["Auth"]
+    end
+    
+    subgraph Services["Services"]
+        direction LR
+        Users["User<br/>Service"]
+        Orders["Order<br/>Service"]
+        Payment["Payment<br/>Service"]
+    end
+    
+    subgraph DB["Data"]
+        UserDB[(Users DB)]
+        OrderDB[(Orders DB)]
+        Redis["Redis<br/>Cache"]
+    end
+    
+    UI -->|Request| Gateway
+    UI -->|Read/Write| Cache
+    Gateway --> Auth
+    Gateway --> Users
+    Gateway --> Orders
+    Gateway --> Payment
+    
+    Auth --> UserDB
+    Users --> UserDB
+    Orders --> OrderDB
+    Orders --> Redis
+    Payment --> OrderDB
+    
+    classDef primary fill:#4A90E2,stroke:#2E5C8A,color:#fff
+    classDef db fill:#F5A623,stroke:#C17D11,color:#fff
+    classDef process fill:#7ED321,stroke:#5FA619,color:#fff
+    
+    class Gateway,Auth primary
+    class UserDB,OrderDB,Redis db
+    class Users,Orders,Payment process

@@ -1,0 +1,14 @@
+gantt
+    title Critical Path
+    dateFormat YYYY-MM-DD
+    excludes weekends
+    
+    section Development
+        Design          :crit, des1, 2024-01-08, 5d
+        Implementation  :crit, impl1, after des1, 10d
+        Testing         :active, test1, after impl1, 5d
+        
+    section Deployment
+        Release notes   :done, rel1, 2024-01-08, 3d
+        Production prep :after test1, 2d
+        Launch          :milestone, launch, after test1 rel1, 0d

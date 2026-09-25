@@ -1,0 +1,10 @@
+sequenceDiagram
+    participant Client as Client App
+    participant Server as API Server
+    participant Cache as Redis<br/>Cache
+    Client->>+Server: Request Data
+    Server->>+Cache: Check Cache
+    Cache-->>-Server: Cache Miss
+    Server->>Server: Fetch from DB
+    Server->>Cache: Store in Cache
+    Server-->>-Client: Send Response

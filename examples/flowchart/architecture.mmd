@@ -1,0 +1,36 @@
+flowchart TB
+    subgraph Frontend["Frontend Layer"]
+        UI[Web UI]
+        Cache["Local Cache"]
+    end
+    
+    subgraph API["API Gateway"]
+        Gateway[Gateway]
+        Auth[Auth Service]
+    end
+    
+    subgraph Services["Microservices"]
+        direction LR
+        OrderSvc[Order Service]
+        UserSvc[User Service]
+        PaymentSvc[Payment Service]
+    end
+    
+    subgraph Storage["Data Layer"]
+        OrderDB[(Orders DB)]
+        UserDB[(Users DB)]
+        Cache2["Redis Cache"]
+    end
+    
+    UI --> Gateway
+    UI --> Cache
+    Gateway --> Auth
+    Gateway --> OrderSvc
+    Gateway --> UserSvc
+    Gateway --> PaymentSvc
+    
+    Auth --> UserDB
+    OrderSvc --> OrderDB
+    OrderSvc --> Cache2
+    UserSvc --> UserDB
+    PaymentSvc --> OrderDB

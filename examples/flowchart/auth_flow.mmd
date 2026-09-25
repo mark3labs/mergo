@@ -1,0 +1,18 @@
+flowchart TB
+    Start([User Login]) --> InputCreds["Enter Username<br/>& Password"]
+    InputCreds --> Validate{Credentials<br/>Valid?}
+    
+    Validate -->|Invalid| Error["Show Error"]
+    Error --> InputCreds
+    
+    Validate -->|Valid| Check{2FA<br/>Enabled?}
+    
+    Check -->|No| Session[Create Session]
+    Check -->|Yes| SendOTP[Send OTP]
+    SendOTP --> VerifyOTP[User Enters OTP]
+    VerifyOTP --> CheckOTP{OTP Valid?}
+    CheckOTP -->|No| SendOTP
+    CheckOTP -->|Yes| Session
+    
+    Session --> Dashboard[Redirect to Dashboard]
+    Dashboard --> End([Login Success])

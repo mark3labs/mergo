@@ -1,0 +1,13 @@
+---
+title: Document Workflow
+---
+stateDiagram-v2
+[*] --> Draft
+Draft : Editing document
+Draft --> Submitted : submit
+Submitted : Under review
+Submitted --> Review
+Review : Reviewer examining
+Review --> Published : approved
+Review --> Draft : rejected
+Published --> [*]
