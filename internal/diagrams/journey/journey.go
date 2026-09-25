@@ -82,7 +82,7 @@ func Parse(src string) (*Journey, error) {
 		}
 		t := &Task{Name: diagram.CleanLabel(parts[0]), Score: score, Section: section}
 		if len(parts) == 3 {
-			for _, a := range strings.Split(parts[2], ",") {
+			for a := range strings.SplitSeq(parts[2], ",") {
 				if a = strings.TrimSpace(a); a != "" {
 					t.Actors = append(t.Actors, a)
 					if !seen[a] {

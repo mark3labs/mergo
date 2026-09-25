@@ -3,6 +3,7 @@ package flowchart
 
 import (
 	"image/color"
+	"maps"
 	"math"
 	"sort"
 	"strconv"
@@ -313,12 +314,8 @@ func (r *renderer) render() *scene.Scene {
 			st.Dash = []float64{3, 4}
 		}
 		css := map[string]string{}
-		for k, v := range g.LinkStyles[-1] {
-			css[k] = v
-		}
-		for k, v := range g.LinkStyles[e.Index] {
-			css[k] = v
-		}
+		maps.Copy(css, g.LinkStyles[-1])
+		maps.Copy(css, g.LinkStyles[e.Index])
 		for k, v := range css {
 			switch k {
 			case "stroke":

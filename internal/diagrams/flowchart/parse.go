@@ -2,6 +2,7 @@ package flowchart
 
 import (
 	"fmt"
+	"maps"
 	"regexp"
 	"strings"
 	"unicode"
@@ -255,20 +256,16 @@ func (p *parser) statement(s stmt) error {
 	case "classDef":
 		names, styles := firstWord(rest)
 		st := parseStyle(styles)
-		for _, n := range strings.Split(names, ",") {
+		for n := range strings.SplitSeq(names, ",") {
 			n = strings.TrimSpace(n)
 			if n == "" {
 				continue
 			}
 			if old, ok := p.g.ClassDefs[n]; ok {
-				for k, v := range st {
-					old[k] = v
-				}
+				maps.Copy(old, st)
 			} else {
 				cp := map[string]string{}
-				for k, v := range st {
-					cp[k] = v
-				}
+				maps.Copy(cp, st)
 				p.g.ClassDefs[n] = cp
 			}
 		}
@@ -278,7 +275,7 @@ func (p *parser) statement(s stmt) error {
 		if ids == "" {
 			return fmt.Errorf("line %d: class statement needs node ids and a class name", s.line)
 		}
-		for _, id := range strings.Split(ids, ",") {
+		for id := range strings.SplitSeq(ids, ",") {
 			id = strings.TrimSpace(id)
 			if id == "" {
 				continue
@@ -306,7 +303,7 @@ func (p *parser) statement(s stmt) error {
 	case "linkStyle":
 		idxs, styles := firstWord(rest)
 		st := parseStyle(styles)
-		for _, is := range strings.Split(idxs, ",") {
+		for is := range strings.SplitSeq(idxs, ",") {
 			is = strings.TrimSpace(is)
 			if is == "default" {
 				mergeLinkStyle(p.g.LinkStyles, -1, st)
@@ -673,7 +670,7 @@ func (sc *scanner) ident() string {
 		if (r == '-' || r == '.') && sc.i > start {
 			// part of the id if followed by an identifier char (a-b, v1.2)
 			nr, _ := decodeRune(sc.s[sc.i+1:])
-			if isIdentRune(nr) && !(r == '-' && (nr == 'x' || nr == 'o') && sc.linkAhead()) {
+			if isIdentRune(nr) && (r != '-' || (nr != 'x' && nr != 'o') || !sc.linkAhead()) {
 				sc.i += size
 				continue
 			}
@@ -834,7 +831,7 @@ func isMarkerEnd(c byte, next byte) bool {
 		return true
 	case 'x', 'o':
 		// only a marker if not followed by an identifier character
-		return !(next == '_' || next >= 'a' && next <= 'z' || next >= 'A' && next <= 'Z' || next >= '0' && next <= '9')
+		return next != '_' && (next < 'a' || next > 'z') && (next < 'A' || next > 'Z') && (next < '0' || next > '9')
 	}
 	return false
 }
@@ -1048,9 +1045,7 @@ func mergeStyle(dst *map[string]string, src map[string]string) {
 	if *dst == nil {
 		*dst = map[string]string{}
 	}
-	for k, v := range src {
-		(*dst)[k] = v
-	}
+	maps.Copy((*dst), src)
 }
 
 func mergeLinkStyle(m map[int]map[string]string, i int, st map[string]string) {

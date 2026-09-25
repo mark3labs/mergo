@@ -356,9 +356,9 @@ func (p *parser) declare(kind, rest string, ln int, create bool) error {
 			v = strings.Trim(v, `"'`)
 			props[lower(kv[1])] = v
 		}
-	} else if i := strings.Index(rest, " as "); i >= 0 {
-		id = strings.TrimSpace(rest[:i])
-		label = rest[i+4:]
+	} else if before, after, ok := strings.Cut(rest, " as "); ok {
+		id = strings.TrimSpace(before)
+		label = after
 	}
 	pp := p.participant(id)
 	pp.Kind = k
@@ -401,7 +401,7 @@ func (p *parser) note(rest string, ln int) error {
 		return fmt.Errorf("line %d: note needs ': text'", ln)
 	}
 	var parts []*Participant
-	for _, id := range strings.Split(who, ",") {
+	for id := range strings.SplitSeq(who, ",") {
 		id = strings.TrimSpace(id)
 		if id != "" {
 			parts = append(parts, p.participant(id))

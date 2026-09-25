@@ -25,7 +25,7 @@ type RenderOptions struct {
 	NoShadows bool
 }
 
-func nrgba(c color.RGBA) color.NRGBA { return color.NRGBA{c.R, c.G, c.B, c.A} }
+func nrgba(c color.RGBA) color.NRGBA { return color.NRGBA(c) }
 
 // Render rasterizes the scene.
 func (s *Scene) Render(o RenderOptions) *image.RGBA {

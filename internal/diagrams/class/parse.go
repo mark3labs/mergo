@@ -2,6 +2,7 @@ package class
 
 import (
 	"fmt"
+	"maps"
 	"regexp"
 	"strings"
 
@@ -118,7 +119,6 @@ type parser struct {
 	d       *Diagram
 	nsStack []string
 	inClass *Class
-	braceNS []bool // for each '{' on the stack: true = namespace
 }
 
 // Parse parses class diagram source.
@@ -294,9 +294,9 @@ func (p *parser) line(line string, ln int) error {
 		}
 		if m[9] == "{" {
 			body := strings.TrimSpace(m[10])
-			if strings.HasSuffix(body, "}") {
+			if before, ok := strings.CutSuffix(body, "}"); ok {
 				// single line: class A { +x }
-				for _, part := range strings.Split(strings.TrimSuffix(body, "}"), ";") {
+				for part := range strings.SplitSeq(before, ";") {
 					c.addMember(part)
 				}
 				return nil
@@ -310,14 +310,12 @@ func (p *parser) line(line string, ln int) error {
 	case "classDef":
 		names, css := cutWord(rest)
 		st := diagram.ParseCSS(css)
-		for _, n := range strings.Split(names, ",") {
+		for n := range strings.SplitSeq(names, ",") {
 			if n = strings.TrimSpace(n); n != "" {
 				if p.d.ClassDefs[n] == nil {
 					p.d.ClassDefs[n] = map[string]string{}
 				}
-				for k, v := range st {
-					p.d.ClassDefs[n][k] = v
-				}
+				maps.Copy(p.d.ClassDefs[n], st)
 			}
 		}
 		return nil
@@ -329,7 +327,7 @@ func (p *parser) line(line string, ln int) error {
 			return fmt.Errorf("line %d: cssClass expects \"ids\" className", ln)
 		}
 		name := strings.TrimSpace(rest[q2+1:])
-		for _, id := range strings.Split(rest[q+1:q2], ",") {
+		for id := range strings.SplitSeq(rest[q+1:q2], ",") {
 			if id = strings.TrimSpace(id); id != "" {
 				c := p.class(id)
 				c.Classes = append(c.Classes, name)
@@ -342,9 +340,7 @@ func (p *parser) line(line string, ln int) error {
 		if c.Style == nil {
 			c.Style = map[string]string{}
 		}
-		for k, v := range diagram.ParseCSS(css) {
-			c.Style[k] = v
-		}
+		maps.Copy(c.Style, diagram.ParseCSS(css))
 		return nil
 	case "click", "callback", "link", "accTitle", "accDescr":
 		return nil

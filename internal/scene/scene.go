@@ -287,7 +287,7 @@ func (p *Path) Arc(cx, cy, rx, ry, a0, a1 float64, connect bool) *Path {
 	step := (a1 - a0) / float64(n)
 	k := 4.0 / 3.0 * math.Tan(step/4)
 	a := a0
-	for i := 0; i < n; i++ {
+	for range n {
 		b := a + step
 		c0, s0 := math.Cos(a), math.Sin(a)
 		c1, s1 := math.Cos(b), math.Sin(b)

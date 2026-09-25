@@ -210,7 +210,7 @@ func Preprocess(src string) (*Document, error) {
 	// Remove comments and accessibility statements.
 	var lines []string
 	inAccDescr := false
-	for _, line := range strings.Split(src, "\n") {
+	for line := range strings.SplitSeq(src, "\n") {
 		t := strings.TrimSpace(line)
 		if inAccDescr {
 			if strings.Contains(t, "}") {
@@ -545,7 +545,7 @@ func CleanLabel(s string) string {
 // treated as separators (callers that need that should split themselves).
 func Lines(src string) []string {
 	var out []string
-	for _, l := range strings.Split(src, "\n") {
+	for l := range strings.SplitSeq(src, "\n") {
 		l = strings.TrimSpace(l)
 		if l != "" {
 			out = append(out, l)

@@ -3,7 +3,9 @@ package state
 
 import (
 	"math"
+	"slices"
 	"sort"
+	"strings"
 
 	"github.com/mark3labs/mergo/internal/diagram"
 	"github.com/mark3labs/mergo/internal/layout"
@@ -144,14 +146,14 @@ func (r *renderer) buildLeaf(s *State) *layout.Node {
 }
 
 func joinLines(ls []string) string {
-	out := ""
+	var out strings.Builder
 	for i, l := range ls {
 		if i > 0 {
-			out += "\n"
+			out.WriteString("\n")
 		}
-		out += l
+		out.WriteString(l)
 	}
-	return out
+	return out.String()
 }
 
 // reserveNote widens a leaf's layout node to hold a note beside it.
@@ -499,10 +501,5 @@ func (r *renderer) collides(c scene.Rect, target string) bool {
 			return true
 		}
 	}
-	for _, p := range r.placed {
-		if hit(p) {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(r.placed, hit)
 }

@@ -3,6 +3,7 @@ package er
 
 import (
 	"fmt"
+	"maps"
 	"regexp"
 	"strings"
 
@@ -145,9 +146,7 @@ func Parse(src string) (*Diagram, error) {
 				return nil, fmt.Errorf("line %d: invalid attribute %q (expected 'type name [PK|FK|UK] [\"comment\"]')", ln, line)
 			}
 			a := Attribute{Type: displayType(m[1]), Name: m[2], Comment: m[4]}
-			for _, k := range strings.FieldsFunc(m[3], func(r rune) bool { return r == ',' || r == ' ' }) {
-				a.Keys = append(a.Keys, k)
-			}
+			a.Keys = append(a.Keys, strings.FieldsFunc(m[3], func(r rune) bool { return r == ',' || r == ' ' })...)
 			cur.Attrs = append(cur.Attrs, a)
 			continue
 		}
@@ -170,20 +169,18 @@ func Parse(src string) (*Diagram, error) {
 		case "classDef":
 			names, css := cutWord(rest)
 			st := diagram.ParseCSS(css)
-			for _, n := range strings.Split(names, ",") {
+			for n := range strings.SplitSeq(names, ",") {
 				if n = strings.TrimSpace(n); n != "" {
 					if d.ClassDefs[n] == nil {
 						d.ClassDefs[n] = map[string]string{}
 					}
-					for k, v := range st {
-						d.ClassDefs[n][k] = v
-					}
+					maps.Copy(d.ClassDefs[n], st)
 				}
 			}
 			continue
 		case "class":
 			ids, cls := lastWord(rest)
-			for _, id := range strings.Split(ids, ",") {
+			for id := range strings.SplitSeq(ids, ",") {
 				if id = strings.TrimSpace(id); id != "" {
 					e := entity(id)
 					e.Classes = append(e.Classes, cls)
@@ -196,9 +193,7 @@ func Parse(src string) (*Diagram, error) {
 			if e.Style == nil {
 				e.Style = map[string]string{}
 			}
-			for k, v := range diagram.ParseCSS(css) {
-				e.Style[k] = v
-			}
+			maps.Copy(e.Style, diagram.ParseCSS(css))
 			continue
 		case "accTitle", "accDescr", "click":
 			continue

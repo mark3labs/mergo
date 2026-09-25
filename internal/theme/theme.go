@@ -535,8 +535,8 @@ func ParseColor(s string) (color.RGBA, error) {
 		fn := s[:i]
 		args := strings.FieldsFunc(s[i+1:len(s)-1], func(r rune) bool { return r == ',' || r == ' ' || r == '/' })
 		num := func(a string, scale float64) float64 {
-			if strings.HasSuffix(a, "%") {
-				v, _ := strconv.ParseFloat(strings.TrimSuffix(a, "%"), 64)
+			if before, ok := strings.CutSuffix(a, "%"); ok {
+				v, _ := strconv.ParseFloat(before, 64)
 				return v / 100 * scale
 			}
 			a = strings.TrimSuffix(a, "deg")

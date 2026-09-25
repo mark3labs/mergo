@@ -72,7 +72,7 @@ func TestPlaceholderGrid(t *testing.T) {
 	// the placeholders must survive ultraviolet's cell model with width 1
 	buf := uv.NewScreenBuffer(4, 1)
 	uv.NewStyledString(lines[1]).Draw(buf, buf.Bounds())
-	for x := 0; x < 4; x++ {
+	for x := range 4 {
 		c := buf.CellAt(x, 0)
 		if c == nil || c.Width != 1 || !strings.HasPrefix(c.Content, string(kitty.Placeholder)) {
 			t.Fatalf("cell %d = %+v", x, c)
@@ -125,7 +125,7 @@ func TestHalfBlocks(t *testing.T) {
 	img := image.NewRGBA(image.Rect(0, 0, 2, 4))
 	red := color.RGBA{255, 0, 0, 255}
 	blue := color.RGBA{0, 0, 255, 255}
-	for x := 0; x < 2; x++ {
+	for x := range 2 {
 		img.Set(x, 0, red)
 		img.Set(x, 1, blue)
 		img.Set(x, 2, blue)

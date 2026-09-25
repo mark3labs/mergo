@@ -13,6 +13,7 @@ package layout
 
 import (
 	"math"
+	"slices"
 	"sort"
 	"strings"
 
@@ -76,8 +77,6 @@ type Node struct {
 
 	// internal
 	parent *Node
-	rank   int
-	order  int
 }
 
 // IsCluster reports whether the node has children.
@@ -456,10 +455,10 @@ func (l *layouter) layoutLevel(nodes []*Node, edges []*levelEdge, dir Direction)
 	}
 	// Pull nodes down toward successors if they have more outgoing than
 	// incoming weight (reduces total edge length; sources get tight).
-	for iter := 0; iter < 4; iter++ {
+	for range 4 {
 		changed := false
-		for i := len(topo) - 1; i >= 0; i-- {
-			n := topo[i]
+		for _, n := range slices.Backward(topo) {
+
 			if len(outE[n]) == 0 {
 				continue
 			}
@@ -909,7 +908,7 @@ func orderLayers(layers [][]*lnode) {
 	if bestC == 0 {
 		return
 	}
-	for iter := 0; iter < 24; iter++ {
+	for iter := range 24 {
 		if iter%2 == 0 {
 			for r := 1; r < len(layers); r++ {
 				sortByBary(layers[r], true)
@@ -1064,7 +1063,7 @@ func assignX(layers [][]*lnode, sep func(a, b *lnode) float64) {
 			}
 		}
 	}
-	for iter := 0; iter < 12; iter++ {
+	for iter := range 12 {
 		down := iter%2 == 0
 		useBoth := iter >= 2
 		if down {

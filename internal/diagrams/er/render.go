@@ -2,6 +2,7 @@ package er
 
 import (
 	"math"
+	"strings"
 
 	"github.com/mark3labs/mergo/internal/diagram"
 	"github.com/mark3labs/mergo/internal/layout"
@@ -101,14 +102,14 @@ func (r *renderer) measure(e *Entity) *table {
 }
 
 func joinKeys(ks []string) string {
-	out := ""
+	var out strings.Builder
 	for i, k := range ks {
 		if i > 0 {
-			out += ", "
+			out.WriteString(", ")
 		}
-		out += k
+		out.WriteString(k)
 	}
-	return out
+	return out.String()
 }
 
 func cardMarker(c Card) scene.MarkerKind {
@@ -236,7 +237,7 @@ func (r *renderer) drawTable(sc *scene.Scene, id string) {
 	grid := scene.Style{Stroke: theme.WithAlpha(st.Stroke, 110), StrokeWidth: 1}
 	if len(t.e.Attrs) > 0 {
 		cx := x
-		for ci := 0; ci < 3; ci++ {
+		for ci := range 3 {
 			cx += t.cols[ci]
 			if t.cols[ci] > 0 && cx < x+t.w-1 {
 				sc.Add(scene.Line(cx, y+t.headerH, cx, y+t.h, grid))

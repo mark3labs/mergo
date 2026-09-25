@@ -207,7 +207,7 @@ func (g *Graph) newCommit(b *Branch, a map[string][]string, t CommitType) *Commi
 		c.custom = true
 	} else {
 		h := fnv.New32a()
-		fmt.Fprintf(h, "%d-%s", seq, b.Name)
+		_, _ = fmt.Fprintf(h, "%d-%s", seq, b.Name)
 		c.ID = fmt.Sprintf("%d-%07x", seq, h.Sum32()&0xfffffff)
 	}
 	c.Tags = a["tag"]

@@ -92,7 +92,7 @@ func terminalCellSize() CellSize {
 		}
 	}
 	if f, err := os.Open("/dev/tty"); err == nil {
-		defer f.Close()
+		defer func() { _ = f.Close() }()
 		if cs, ok := ttyCellSize(f.Fd()); ok {
 			return cs
 		}

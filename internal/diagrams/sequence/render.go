@@ -4,6 +4,7 @@ package sequence
 import (
 	"image/color"
 	"math"
+	"slices"
 	"sort"
 	"strconv"
 
@@ -403,8 +404,8 @@ func (r *renderer) layoutY() {
 		allMin = math.Min(allMin, r.ps[p].x)
 		allMax = math.Max(allMax, r.ps[p].x)
 	}
-	for i := len(r.frames) - 1; i >= 0; i-- {
-		f := r.frames[i]
+	for i, f := range slices.Backward(r.frames) {
+
 		if !f.hasX {
 			f.minX, f.maxX = allMin, allMax
 		}
@@ -454,8 +455,8 @@ func (r *renderer) frameLabelWidth(f *frame) float64 {
 }
 
 func (r *renderer) endBar(p *Participant, y float64) {
-	for i := len(r.bars) - 1; i >= 0; i-- {
-		b := r.bars[i]
+	for _, b := range slices.Backward(r.bars) {
+
 		if b.p == p && b.end == 0 {
 			b.end = math.Max(y, b.start+12)
 			return
@@ -487,11 +488,9 @@ func (r *renderer) draw() *scene.Scene {
 			th2 = 0
 		}
 		top := -th2 - 18
-		bottom := r.headerH + 10
+		bottom := bottomTop + 10
 		if r.mirror {
-			bottom = bottomTop + r.headerH + 10
-		} else {
-			bottom = bottomTop + 10
+			bottom += r.headerH
 		}
 		fill := b.Color
 		if fill.A == 0 {

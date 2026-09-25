@@ -57,7 +57,6 @@ type renderer struct {
 	boxes             map[string]*box
 	nodes             map[string]*layout.Node
 	clusters          map[string]*layout.Node
-	noteNodes         []*layout.Node
 }
 
 func (r *renderer) measure(c *Class) *box {
@@ -172,7 +171,6 @@ func (r *renderer) render() *scene.Scene {
 		n   *Note
 		ln  *layout.Node
 		le  *layout.Edge
-		w   float64
 		txt string
 	}
 	var notes []noteInfo

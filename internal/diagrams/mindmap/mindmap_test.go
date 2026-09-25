@@ -58,7 +58,7 @@ func collect(n *Node, out *[]*Node) {
 func TestLargeTreeNoOverlap(t *testing.T) {
 	var sb strings.Builder
 	sb.WriteString("mindmap\n  root((Root))\n")
-	for i := 0; i < 7; i++ {
+	for i := range 7 {
 		fmt.Fprintf(&sb, "    Branch %d\n", i)
 		for j := 0; j < i%4+1; j++ {
 			fmt.Fprintf(&sb, "      Leaf %d.%d with a longer label\n", i, j)

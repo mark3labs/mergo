@@ -104,15 +104,18 @@ func typesCmd() *cobra.Command {
 		Use:   "types",
 		Short: "List supported diagram types and themes",
 		Args:  cobra.NoArgs,
-		Run: func(cmd *cobra.Command, _ []string) {
-			fmt.Fprintln(cmd.OutOrStdout(), "Diagram types:")
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			var sb strings.Builder
+			sb.WriteString("Diagram types:\n")
 			for _, t := range mermaid.Types() {
-				fmt.Fprintln(cmd.OutOrStdout(), "  •", t)
+				sb.WriteString("  • " + t + "\n")
 			}
-			fmt.Fprintln(cmd.OutOrStdout(), "\nThemes:")
+			sb.WriteString("\nThemes:\n")
 			for _, t := range theme.Names() {
-				fmt.Fprintln(cmd.OutOrStdout(), "  •", t)
+				sb.WriteString("  • " + t + "\n")
 			}
+			_, err := fmt.Fprint(cmd.OutOrStdout(), sb.String())
+			return err
 		},
 	}
 }

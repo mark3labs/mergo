@@ -2,6 +2,7 @@ package state
 
 import (
 	"fmt"
+	"maps"
 	"regexp"
 	"strings"
 
@@ -221,20 +222,18 @@ func (p *parser) line(line string, ln int) error {
 	case strings.HasPrefix(line, "classDef "):
 		names, css := cutWord(line[9:])
 		st := diagram.ParseCSS(css)
-		for _, n := range strings.Split(names, ",") {
+		for n := range strings.SplitSeq(names, ",") {
 			if n = strings.TrimSpace(n); n != "" {
 				if p.d.ClassDefs[n] == nil {
 					p.d.ClassDefs[n] = map[string]string{}
 				}
-				for k, v := range st {
-					p.d.ClassDefs[n][k] = v
-				}
+				maps.Copy(p.d.ClassDefs[n], st)
 			}
 		}
 		return nil
 	case strings.HasPrefix(line, "class "):
 		ids, cls := lastWord(line[6:])
-		for _, id := range strings.Split(ids, ",") {
+		for id := range strings.SplitSeq(ids, ",") {
 			if id = strings.TrimSpace(id); id != "" {
 				s := p.state(id)
 				s.Classes = append(s.Classes, cls)
@@ -247,9 +246,7 @@ func (p *parser) line(line string, ln int) error {
 		if s.Style == nil {
 			s.Style = map[string]string{}
 		}
-		for k, v := range diagram.ParseCSS(css) {
-			s.Style[k] = v
-		}
+		maps.Copy(s.Style, diagram.ParseCSS(css))
 		return nil
 	case strings.HasPrefix(strings.ToLower(line), "note "):
 		m := noteRe.FindStringSubmatch(line)

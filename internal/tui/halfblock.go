@@ -41,10 +41,7 @@ func init() {
 }
 
 func toSRGB(v float32) uint8 {
-	i := int(v*float32(len(linearToSRGB)-1) + 0.5)
-	if i < 0 {
-		i = 0
-	}
+	i := max(int(v*float32(len(linearToSRGB)-1)+0.5), 0)
 	if i >= len(linearToSRGB) {
 		i = len(linearToSRGB) - 1
 	}
@@ -62,11 +59,11 @@ func downsample(img *image.RGBA, w, h int) *image.RGBA {
 	}
 	fx := float64(sw) / float64(w)
 	fy := float64(sh) / float64(h)
-	for y := 0; y < h; y++ {
+	for y := range h {
 		y0 := int(float64(y) * fy)
 		y1 := max(int(float64(y+1)*fy), y0+1)
 		y1 = min(y1, sh)
-		for x := 0; x < w; x++ {
+		for x := range w {
 			x0 := int(float64(x) * fx)
 			x1 := max(int(float64(x+1)*fx), x0+1)
 			x1 = min(x1, sw)
@@ -107,8 +104,8 @@ func halfBlocks(img *image.RGBA, cols, rows int) []string {
 		px = downsample(img, cols, rows*2)
 	}
 	buf := uv.NewBuffer(cols, rows)
-	for y := 0; y < rows; y++ {
-		for x := 0; x < cols; x++ {
+	for y := range rows {
+		for x := range cols {
 			top := px.RGBAAt(x, 2*y)
 			bot := px.RGBAAt(x, 2*y+1)
 			top.A, bot.A = 255, 255
@@ -122,7 +119,7 @@ func halfBlocks(img *image.RGBA, cols, rows int) []string {
 		}
 	}
 	lines := make([]string, rows)
-	for y := 0; y < rows; y++ {
+	for y := range rows {
 		lines[y] = buf.Line(y).Render()
 	}
 	return lines

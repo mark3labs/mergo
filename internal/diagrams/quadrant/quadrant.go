@@ -132,7 +132,7 @@ func Parse(src string) (*Chart, error) {
 
 func parseProps(s string) map[string]string {
 	out := map[string]string{}
-	for _, part := range strings.Split(s, ",") {
+	for part := range strings.SplitSeq(s, ",") {
 		k, v, ok := strings.Cut(part, ":")
 		if ok {
 			out[strings.TrimSpace(k)] = strings.TrimSpace(v)
@@ -203,7 +203,7 @@ func Render(src string, cfg *diagram.Config) (*scene.Scene, error) {
 		}
 	}
 	if tv, ok := cfg.Raw["themeVariables"].(map[string]any); ok {
-		for i := 0; i < 4; i++ {
+		for i := range 4 {
 			if s, ok := tv[fmt.Sprintf("quadrant%dFill", i+1)].(string); ok {
 				if col, err := theme.ParseColor(s); err == nil {
 					fills[i] = col

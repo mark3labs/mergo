@@ -366,12 +366,12 @@ func cloud(x, y, w, h float64, st scene.Style) *scene.Path {
 	n := 10
 	rx, ry := w/2, h/2
 	pts := make([]scene.Point, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		a := 2 * math.Pi * float64(i) / float64(n)
 		pts[i] = scene.Pt(cx+rx*0.92*math.Cos(a), cy+ry*0.92*math.Sin(a))
 	}
 	p.MoveTo(pts[0].X, pts[0].Y)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		a, b := pts[i], pts[(i+1)%n]
 		mid := a.Add(b).Mul(0.5)
 		out := mid.Sub(scene.Pt(cx, cy)).Norm().Mul(math.Min(rx, ry) * 0.35)
