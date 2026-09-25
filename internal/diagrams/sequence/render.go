@@ -308,7 +308,8 @@ func (r *renderer) layoutY() {
 				if ev.Creates {
 					m.x2 = tx - dir*r.ps[ev.To].w/2
 				}
-				r.extend(math.Min(fx, tx), math.Max(fx, tx))
+				r.extend(math.Min(math.Min(fx, tx), math.Min(m.x1, m.x2))-float64(max(fromDepth, toDepth))*5,
+					math.Max(math.Max(fx, tx), math.Max(m.x1, m.x2))+float64(max(fromDepth, toDepth))*5)
 			}
 			if ev.Creates {
 				pi := r.ps[ev.To]
@@ -410,7 +411,7 @@ func (r *renderer) layoutY() {
 		if f.bottom == 0 {
 			f.bottom = y
 		}
-		pad := 14.0
+		pad := 22.0
 		f.minX -= pad
 		f.maxX += pad
 		// room for the label tag and texts
@@ -526,12 +527,12 @@ func (r *renderer) draw() *scene.Scene {
 		sc.Add(scene.Line(pi.x, pi.lifeTop, pi.x, end, scene.Style{Stroke: th.ActorLine, StrokeWidth: 1}))
 	}
 
-	// frames
+	// frame outlines and separators (labels are drawn later, on top)
 	for _, f := range r.frames {
 		if f.rect {
 			continue
 		}
-		r.drawFrame(sc, f)
+		r.drawFrameLines(sc, f)
 	}
 
 	// activation bars
@@ -546,6 +547,14 @@ func (r *renderer) draw() *scene.Scene {
 	// messages
 	for _, m := range r.msgs {
 		r.drawMessage(sc, m)
+	}
+
+	// frame label tags and conditions go above bars and message lines
+	for _, f := range r.frames {
+		if f.rect {
+			continue
+		}
+		r.drawFrameLabels(sc, f)
 	}
 
 	// notes
@@ -573,12 +582,21 @@ func (r *renderer) draw() *scene.Scene {
 	return sc
 }
 
-func (r *renderer) drawFrame(sc *scene.Scene, f *frame) {
+func (r *renderer) frameLineStyle() scene.Style {
+	return scene.Style{Stroke: r.th.LabelBoxBorder, StrokeWidth: 1.5, Dash: []float64{3, 3}}
+}
+
+func (r *renderer) drawFrameLines(sc *scene.Scene, f *frame) {
+	st := r.frameLineStyle()
+	sc.Add(scene.RectPath(f.minX, f.top, f.maxX-f.minX, f.bottom-f.top, 0, st))
+	for _, s := range f.seps {
+		sc.Add(scene.Line(f.minX, s.y, f.maxX, s.y, st))
+	}
+}
+
+func (r *renderer) drawFrameLabels(sc *scene.Scene, f *frame) {
 	th := r.th
-	lineSt := scene.Style{Stroke: th.LabelBoxBorder, StrokeWidth: 1.5, Dash: []float64{3, 3}}
 	x0, x1 := f.minX, f.maxX
-	sc.Add(scene.RectPath(x0, f.top, x1-x0, f.bottom-f.top, 0, lineSt))
-	// label tag (pentagon)
 	tw := scene.MeasureText(f.ev.Block, r.labelFont)
 	_, lh := scene.MeasureBlock(f.ev.Block, r.labelFont, 0)
 	tagW, tagH := tw+20, math.Max(lh+6, 20)
@@ -587,15 +605,21 @@ func (r *renderer) drawFrame(sc *scene.Scene, f *frame) {
 		scene.Pt(x0+tagW-8, f.top+tagH), scene.Pt(x0, f.top+tagH)))
 	sc.Add(scene.NewText(x0+tagW/2-3, f.top+tagH/2, f.ev.Block, r.labelFont, th.LabelText, scene.AnchorMiddle, scene.VAlignMiddle))
 	if f.ev.Label != "" {
-		cx := math.Max((x0+x1)/2, x0+tagW+8+scene.MeasureText("["+f.ev.Label+"]", r.labelFont)/2)
-		sc.Add(scene.NewText(cx, f.top+tagH/2, "["+f.ev.Label+"]", r.labelFont, th.LoopText, scene.AnchorMiddle, scene.VAlignMiddle))
+		r.condText(sc, "["+f.ev.Label+"]", math.Max((x0+x1)/2, x0+tagW+10+scene.MeasureText("["+f.ev.Label+"]", r.labelFont)/2), f.top+tagH/2)
 	}
 	for _, s := range f.seps {
-		sc.Add(scene.Line(x0, s.y, x1, s.y, lineSt))
 		if s.label != "" {
-			sc.Add(scene.NewText((x0+x1)/2, s.y+10, "["+s.label+"]", r.labelFont, th.LoopText, scene.AnchorMiddle, scene.VAlignMiddle))
+			r.condText(sc, "["+s.label+"]", (x0+x1)/2, s.y+10)
 		}
 	}
+}
+
+// condText draws a condition label on a background-colored plate so that
+// lifelines and activation bars don't run through it.
+func (r *renderer) condText(sc *scene.Scene, text string, cx, cy float64) {
+	w, h := scene.MeasureBlock(text, r.labelFont, 0)
+	sc.Add(scene.RectPath(cx-w/2-3, cy-h/2, w+6, h, 2, scene.Style{Fill: theme.WithAlpha(r.th.Background, 220)}))
+	sc.Add(scene.NewText(cx, cy, text, r.labelFont, r.th.LoopText, scene.AnchorMiddle, scene.VAlignMiddle))
 }
 
 func (r *renderer) drawMessage(sc *scene.Scene, m msgDraw) {
