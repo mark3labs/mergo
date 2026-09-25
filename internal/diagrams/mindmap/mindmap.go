@@ -1,3 +1,4 @@
+// Package mindmap implements Mermaid mindmaps.
 package mindmap
 
 import (
@@ -20,57 +21,11 @@ func init() {
 	})
 }
 
-// Render renders a mindmap diagram.
-func Render(src string, cfg *diagram.Config) (*scene.Scene, error) {
-	th := cfg.Theme
-	sc := diagram.NewScene(th)
-
-	// Don't use diagram.Lines since it trims all whitespace (we need indentation)
-	lines := strings.Split(src, "\n")
-	var trimmedLines []string
-	for _, line := range lines {
-		line = strings.TrimRight(line, "\r") // trim line endings but keep indentation
-		if strings.TrimSpace(line) != "" {
-			trimmedLines = append(trimmedLines, line)
-		}
-	}
-
-	if len(trimmedLines) == 0 {
-		return diagram.Finish(sc, th, cfg.Title), nil
-	}
-
-	root, err := parseNodes(trimmedLines)
-	if err != nil {
-		return nil, err
-	}
-
-	if root == nil {
-		return diagram.Finish(sc, th, cfg.Title), nil
-	}
-
-	// Layout the mindmap in a radial/balanced tree
-	layoutRadial(root, 0, 0)
-
-	// Render the tree
-	renderNode(sc, root, th, 0)
-
-	return diagram.Finish(sc, th, cfg.Title), nil
-}
-
-type Node struct {
-	Text     string
-	Shape    ShapeType
-	Children []*Node
-	Depth    int
-	X, Y     float64 // Layout position
-	Width    float64
-	Height   float64
-}
-
-type ShapeType int
+// Shape of a mindmap node.
+type Shape int
 
 const (
-	ShapeDefault ShapeType = iota
+	ShapeDefault Shape = iota
 	ShapeSquare
 	ShapeRounded
 	ShapeCircle
@@ -79,327 +34,365 @@ const (
 	ShapeHexagon
 )
 
-// parseNodes parses the mindmap structure from lines of text.
-// Returns the root node or nil if no root found.
-func parseNodes(lines []string) (*Node, error) {
+// Node is a mindmap node.
+type Node struct {
+	ID       string
+	Label    string
+	Shape    Shape
+	Icon     string
+	Classes  []string
+	Children []*Node
+	indent   int
+
+	// layout
+	w, h    float64
+	x, y    float64 // center
+	subH    float64 // subtree extent across the flow
+	branch  int
+	depth   int
+	textW   float64
+	textH   float64
+	wrapped string
+}
+
+var shapeDelims = []struct {
+	open, close string
+	shape       Shape
+}{
+	{"((", "))", ShapeCircle},
+	{"))", "((", ShapeBang},
+	{"{{", "}}", ShapeHexagon},
+	{"(", ")", ShapeRounded},
+	{")", "(", ShapeCloud},
+	{"[", "]", ShapeSquare},
+}
+
+var iconRe = regexp.MustCompile(`^::icon\((.*)\)\s*$`)
+
+// Parse parses mindmap source and returns the root.
+func Parse(src string) (*Node, error) {
 	var root *Node
-	var nodeStack []*Node // Stack to track parent nodes by depth
-
-	for lineIdx, line := range lines {
-		if line == "" {
+	var stack []*Node
+	var last *Node
+	header := false
+	for i, raw := range strings.Split(src, "\n") {
+		ln := i + 1
+		trimmed := strings.TrimSpace(raw)
+		if trimmed == "" || strings.HasPrefix(trimmed, "%%") {
 			continue
 		}
-
-		// Count indentation
-		indent := 0
-		for _, c := range line {
-			if c == ' ' || c == '\t' {
-				indent++
-			} else {
-				break
+		if !header {
+			if !strings.HasPrefix(trimmed, "mindmap") {
+				return nil, fmt.Errorf("line %d: expected 'mindmap'", ln)
 			}
-		}
-		depth := indent / 2 // Assume 2 spaces per level
-
-		// Trim the line
-		trimmed := strings.TrimSpace(line)
-
-		// Skip directives and special lines
-		if strings.HasPrefix(trimmed, "%%") || trimmed == "" {
+			header = true
 			continue
 		}
-
-		// Skip icon lines (::icon(...))
-		if strings.HasPrefix(trimmed, "::icon") {
+		indent := indentOf(raw)
+		if m := iconRe.FindStringSubmatch(trimmed); m != nil {
+			if last != nil {
+				last.Icon = m[1]
+			}
 			continue
 		}
-
-		// Parse class line (:::class)
 		if strings.HasPrefix(trimmed, ":::") {
+			if last != nil {
+				last.Classes = append(last.Classes, strings.Fields(trimmed[3:])...)
+			}
 			continue
 		}
-
-		// Parse node text and shape
-		text, shape := parseNodeShape(trimmed)
-		if text == "" {
-			continue
-		}
-
-		text = diagram.CleanLabel(text)
-
-		node := &Node{
-			Text:  text,
-			Shape: shape,
-			Depth: depth,
-		}
-
+		n := parseNode(trimmed)
+		n.indent = indent
 		if root == nil {
-			root = node
-			nodeStack = []*Node{root}
-		} else {
-			// Determine parent based on indentation
-			// If depth is <= current stack depth, pop until we find the right parent
-			for len(nodeStack) > depth {
-				nodeStack = nodeStack[:len(nodeStack)-1]
-			}
-
-			if len(nodeStack) == 0 {
-				return nil, fmt.Errorf("line %d: invalid indentation", lineIdx+1)
-			}
-
-			parent := nodeStack[len(nodeStack)-1]
-			parent.Children = append(parent.Children, node)
-			nodeStack = append(nodeStack, node)
+			root = n
+			stack = []*Node{n}
+			last = n
+			continue
 		}
+		for len(stack) > 0 && stack[len(stack)-1].indent >= indent {
+			stack = stack[:len(stack)-1]
+		}
+		if len(stack) == 0 {
+			return nil, fmt.Errorf("line %d: there can be only one root node (check indentation of %q)", ln, trimmed)
+		}
+		parent := stack[len(stack)-1]
+		parent.Children = append(parent.Children, n)
+		stack = append(stack, n)
+		last = n
 	}
-
+	if root == nil {
+		return nil, fmt.Errorf("mindmap has no nodes")
+	}
 	return root, nil
 }
 
-// parseNodeShape extracts the node text and shape type from a line.
-// Handles: id[text] (square), id(text) (rounded), id((text)) (circle),
-// id))text(( (bang), id)text( (cloud), id{{text}} (hexagon), text (default)
-func parseNodeShape(s string) (text string, shape ShapeType) {
-	s = strings.TrimSpace(s)
-
-	// Try to match id with shape: id[...], id(...), id((..)), etc.
-	// Pattern: optional id followed by shape brackets
-
-	// Check for hexagon: {{...}}
-	if strings.Contains(s, "{{") && strings.Contains(s, "}}") {
-		// Extract text between {{ and }}
-		start := strings.Index(s, "{{")
-		end := strings.LastIndex(s, "}}")
-		if start < end {
-			return strings.TrimSpace(s[start+2 : end]), ShapeHexagon
+func indentOf(s string) int {
+	n := 0
+	for _, r := range s {
+		switch r {
+		case ' ':
+			n++
+		case '\t':
+			n += 4
+		default:
+			return n
 		}
 	}
-
-	// Check for bang: ))text((
-	if strings.Contains(s, "))") && strings.Contains(s, "((") {
-		start := strings.Index(s, "))")
-		end := strings.LastIndex(s, "((")
-		if start < end {
-			return strings.TrimSpace(s[start+2 : end]), ShapeBang
-		}
-	}
-
-	// Check for cloud: )text(
-	if strings.Contains(s, ")") && strings.Contains(s, "(") {
-		// Need to be careful: )text( is cloud, but ))text(( is bang and (text) is rounded
-		if !strings.Contains(s, "((") && !strings.Contains(s, "))") {
-			re := regexp.MustCompile(`[^()\[\]]*\)([^)]+)\(`)
-			match := re.FindStringSubmatch(s)
-			if match != nil {
-				return strings.TrimSpace(match[1]), ShapeCloud
-			}
-		}
-	}
-
-	// Check for circle: ((text))
-	if strings.Contains(s, "((") && strings.Contains(s, "))") {
-		start := strings.Index(s, "((")
-		end := strings.LastIndex(s, "))")
-		if start < end {
-			return strings.TrimSpace(s[start+2 : end]), ShapeCircle
-		}
-	}
-
-	// Check for rounded: (text)
-	if strings.Contains(s, "(") && strings.Contains(s, ")") {
-		re := regexp.MustCompile(`[^[\]]*\(([^)]+)\)`)
-		match := re.FindStringSubmatch(s)
-		if match != nil {
-			return strings.TrimSpace(match[1]), ShapeRounded
-		}
-	}
-
-	// Check for square: [text]
-	if strings.Contains(s, "[") && strings.Contains(s, "]") {
-		start := strings.Index(s, "[")
-		end := strings.LastIndex(s, "]")
-		if start < end {
-			return strings.TrimSpace(s[start+1 : end]), ShapeSquare
-		}
-	}
-
-	// Default: plain text
-	return s, ShapeDefault
+	return n
 }
 
-// layoutRadial arranges nodes in a radial/balanced tree layout
-// The root is at (x, y), branches extend outward with alternating left/right
-func layoutRadial(root *Node, x, y float64) {
-	if root == nil {
-		return
-	}
-
-	root.X = x
-	root.Y = y
-
-	if len(root.Children) == 0 {
-		root.Width = 60
-		root.Height = 40
-		return
-	}
-
-	// Calculate dimensions for children
-	numChildren := len(root.Children)
-	branchRadius := 120 + float64(root.Depth)*30
-
-	// Distribute children around the root
-	for i, child := range root.Children {
-		// Determine left/right side: even indices go right, odd go left
-		side := 1.0
-		if i%2 == 1 {
-			side = -1.0
+func parseNode(s string) *Node {
+	n := &Node{}
+	for _, d := range shapeDelims {
+		i := strings.Index(s, d.open)
+		if i < 0 || !strings.HasSuffix(s, d.close) || len(s) < i+len(d.open)+len(d.close) {
+			continue
 		}
-
-		// Angle within the hemisphere
-		angleCount := (numChildren + 1) / 2
-		angle := float64(i/2) * math.Pi / float64(angleCount) * side
-
-		// Position child
-		cx := x + branchRadius*math.Cos(angle)
-		cy := y + branchRadius*math.Sin(angle)
-
-		layoutRadial(child, cx, cy)
+		// the id must not contain other delimiters
+		id := strings.TrimSpace(s[:i])
+		if strings.ContainsAny(id, "()[]{}") {
+			continue
+		}
+		n.ID = id
+		n.Label = diagram.CleanLabel(s[i+len(d.open) : len(s)-len(d.close)])
+		n.Shape = d.shape
+		if n.ID == "" {
+			n.ID = n.Label
+		}
+		return n
 	}
-
-	root.Width = 70
-	root.Height = 50
+	n.ID = s
+	n.Label = diagram.CleanLabel(s)
+	return n
 }
 
-// renderNode draws a node and its children
-func renderNode(sc *scene.Scene, node *Node, th *theme.Theme, branchIndex int) {
-	if node == nil {
-		return
+// ---------------------------------------------------------------------------
+
+const (
+	hGap = 70.0
+	vGap = 16.0
+)
+
+// Render renders a mindmap.
+func Render(src string, cfg *diagram.Config) (*scene.Scene, error) {
+	root, err := Parse(src)
+	if err != nil {
+		return nil, err
 	}
+	th := cfg.Theme
+	sc := diagram.NewScene(th)
+	measure(root, 0, th)
 
-	// Determine node color based on depth
-	var fillColor, strokeColor, textColor color.RGBA
-	if node.Depth == 0 {
-		// Root node
-		fillColor = th.PrimaryColor
-		textColor = th.PrimaryTextColor
-		strokeColor = th.PrimaryBorderColor
-	} else {
-		// Branch nodes use palette colors
-		fillColor = th.PaletteColor(branchIndex)
-		textColor = th.PaletteTextColor(branchIndex)
-		strokeColor = th.PrimaryBorderColor
+	// split first level children into right and left groups balancing
+	// their subtree extents
+	var right, left []*Node
+	var rh, lh float64
+	for i, c := range root.Children {
+		assignBranch(c, i)
+		if rh <= lh {
+			right = append(right, c)
+			rh += c.subH + vGap
+		} else {
+			left = append(left, c)
+			lh += c.subH + vGap
+		}
 	}
+	root.x, root.y = 0, 0
+	place(right, root, 1, th)
+	place(left, root, -1, th)
 
-	// Draw node shape
-	drawNodeShape(sc, node, fillColor, strokeColor, textColor, th)
-
-	// Draw connecting lines to children with decreasing thickness
-	for childIdx, child := range node.Children {
-		// Line thickness decreases with depth
-		thickness := math.Max(1, 4-float64(child.Depth)*0.5)
-
-		// Draw curved connector
-		connector := scene.NewPath(scene.Style{
-			Stroke:      strokeColor,
-			StrokeWidth: thickness,
-			RoundCaps:   true,
-		})
-
-		// Cubic bezier from node to child
-		dx := child.X - node.X
-		dy := child.Y - node.Y
-		midX := node.X + dx*0.5
-		midY := node.Y + dy*0.5
-
-		connector.MoveTo(node.X, node.Y)
-		connector.CubicTo(midX-dy*0.2, midY+dx*0.2, midX+dy*0.2, midY-dx*0.2, child.X, child.Y)
-		sc.Add(connector)
-
-		// Recursively render children with adjusted palette index
-		renderNode(sc, child, th, branchIndex+childIdx)
-	}
-
-	// Draw node text
-	f := scene.Font{Size: th.FontSize * 0.9}
-	text := scene.NewText(node.X, node.Y, node.Text, f, textColor, scene.AnchorMiddle, scene.VAlignMiddle)
-	sc.Add(text)
+	drawEdges(sc, root, th)
+	drawNodes(sc, root, th)
+	return diagram.Finish(sc, th, cfg.Title), nil
 }
 
-// drawNodeShape draws the node with its specific shape
-func drawNodeShape(sc *scene.Scene, node *Node, fill, stroke, textColor color.RGBA, th *theme.Theme) {
-	var path *scene.Path
-
-	sw := 2.0
-	if node.Depth == 0 {
-		sw = 3.0
+func fontFor(depth int, th *theme.Theme) scene.Font {
+	switch depth {
+	case 0:
+		return scene.Font{Size: th.FontSize * 1.25, Bold: true}
+	case 1:
+		return scene.Font{Size: th.FontSize * 1.05, Bold: true}
 	}
+	return scene.Font{Size: th.FontSize * 0.95}
+}
 
-	st := scene.Style{
-		Fill:        fill,
-		Stroke:      stroke,
-		StrokeWidth: sw,
-		Shadow:      node.Depth == 0,
-		RoundCaps:   true,
+func measure(n *Node, depth int, th *theme.Theme) {
+	n.depth = depth
+	f := fontFor(depth, th)
+	maxW := 180.0
+	if depth == 0 {
+		maxW = 220
 	}
-
-	x, y := node.X, node.Y
-	w, h := node.Width, node.Height
-	hw, hh := w/2, h/2
-
-	switch node.Shape {
-	case ShapeDefault:
-		// Rounded rectangle (default)
-		path = scene.NewPath(st)
-		path.Rect(x-hw, y-hh, w, h, 5)
-
-	case ShapeSquare:
-		// Sharp rectangle
-		path = scene.NewPath(st)
-		path.Rect(x-hw, y-hh, w, h, 0)
-
-	case ShapeRounded:
-		// Rounded rectangle
-		path = scene.NewPath(st)
-		path.Rect(x-hw, y-hh, w, h, 8)
-
+	n.wrapped = scene.WrapText(n.Label, f, maxW)
+	n.textW, n.textH = scene.MeasureBlock(n.wrapped, f, 0)
+	padX, padY := 18.0, 10.0
+	if depth == 0 {
+		padX, padY = 26, 18
+	}
+	n.w, n.h = n.textW+2*padX, n.textH+2*padY
+	switch n.Shape {
 	case ShapeCircle:
-		// Circle
-		path = scene.NewPath(st)
-		path.Circle(x, y, math.Max(hw, hh))
-
-	case ShapeBang:
-		// Bang shape (asymmetric)
-		path = scene.NewPath(st)
-		path.Polygon(
-			scene.Pt(x-hw, y),
-			scene.Pt(x, y-hh),
-			scene.Pt(x+hw, y),
-			scene.Pt(x+hw/2, y+hh),
-		)
-
-	case ShapeCloud:
-		// Cloud shape (rounded bumps)
-		path = scene.NewPath(st)
-		r := hw / 2
-		path.MoveTo(x-hw/2, y+hh)
-		path.Arc(x-hw, y, r, r, 0, math.Pi, false)
-		path.Arc(x, y, r, r, 0, math.Pi, true)
-		path.Arc(x+hw, y, r, r, 0, math.Pi, true)
-		path.Arc(x+hw/2, y, r, r, 0, math.Pi, true)
-		path.Close()
-
-	case ShapeHexagon:
-		// Hexagon
-		path = scene.NewPath(st)
-		angles := []float64{0, math.Pi / 3, 2 * math.Pi / 3, math.Pi, 4 * math.Pi / 3, 5 * math.Pi / 3}
-		var pts []scene.Point
-		for _, a := range angles {
-			pts = append(pts, scene.Pt(x+hw*math.Cos(a), y+hh*math.Sin(a)))
+		d := math.Max(n.w, n.h) * 0.95
+		if depth == 0 {
+			d = math.Max(d, 90)
 		}
-		path.Polygon(pts...)
+		n.w, n.h = d, d
+	case ShapeHexagon:
+		n.w += n.h / 2
+	case ShapeCloud, ShapeBang:
+		n.w += 24
+		n.h += 18
 	}
+	if depth == 0 && n.Shape == ShapeDefault {
+		// the root defaults to a pill
+		n.w += n.h / 2
+	}
+	childSum := 0.0
+	for i, c := range n.Children {
+		measure(c, depth+1, th)
+		if i > 0 {
+			childSum += vGap
+		}
+		childSum += c.subH
+	}
+	n.subH = math.Max(n.h, childSum)
+}
 
-	if path != nil {
-		sc.Add(path)
+func assignBranch(n *Node, b int) {
+	n.branch = b
+	for _, c := range n.Children {
+		assignBranch(c, b)
 	}
+}
+
+// place lays out a list of subtrees to one side (dir=+1 right, -1 left) of
+// parent, stacked vertically and centered on the parent.
+func place(nodes []*Node, parent *Node, dir float64, th *theme.Theme) {
+	if len(nodes) == 0 {
+		return
+	}
+	total := 0.0
+	maxW := 0.0
+	for i, n := range nodes {
+		if i > 0 {
+			total += vGap
+		}
+		total += n.subH
+		maxW = math.Max(maxW, n.w)
+	}
+	gap := hGap
+	if parent.depth == 0 {
+		gap = hGap + 20
+	}
+	y := parent.y - total/2
+	for _, n := range nodes {
+		n.x = parent.x + dir*(parent.w/2+gap+n.w/2)
+		n.y = y + n.subH/2
+		y += n.subH + vGap
+		place(n.Children, n, dir, th)
+	}
+}
+
+func colors(n *Node, th *theme.Theme) (fillC, textC, lineC color.RGBA) {
+	if n.depth == 0 {
+		return th.PrimaryColor, th.PrimaryTextColor, th.PrimaryBorderColor
+	}
+	c := th.ChartColor(n.branch)
+	fill := c
+	if n.depth >= 2 {
+		fill = theme.Mix(c, th.Background, 0.55)
+	}
+	return fill, theme.ContrastText(fill), c
+}
+
+func drawEdges(sc *scene.Scene, n *Node, th *theme.Theme) {
+	for _, c := range n.Children {
+		_, _, line := colors(c, th)
+		dir := 1.0
+		if c.x < n.x {
+			dir = -1
+		}
+		x1 := n.x + dir*n.w/2*0.85
+		if n.depth == 0 {
+			x1 = n.x + dir*n.w/2*0.6
+		}
+		y1 := n.y
+		x2 := c.x - dir*c.w/2
+		y2 := c.y
+		width := math.Max(4.5-float64(c.depth-1)*1.3, 1.5)
+		mx := (x1 + x2) / 2
+		p := scene.NewPath(scene.Style{Stroke: line, StrokeWidth: width, RoundCaps: true})
+		p.MoveTo(x1, y1).CubicTo(mx, y1, mx, y2, x2, y2)
+		sc.Add(p)
+		drawEdges(sc, c, th)
+	}
+}
+
+func drawNodes(sc *scene.Scene, n *Node, th *theme.Theme) {
+	fill, text, line := colors(n, th)
+	x, y, w, h := n.x-n.w/2, n.y-n.h/2, n.w, n.h
+	st := scene.Style{Fill: fill, Stroke: line, StrokeWidth: 1.5, Shadow: true}
+	if n.depth > 0 && n.Shape == ShapeDefault {
+		st.Stroke = theme.Darken(fill, 0.12)
+	}
+	switch n.Shape {
+	case ShapeSquare:
+		sc.Add(scene.RectPath(x, y, w, h, 0, st))
+	case ShapeRounded:
+		sc.Add(scene.RectPath(x, y, w, h, 10, st))
+	case ShapeCircle:
+		sc.Add(scene.Circle(n.x, n.y, w/2, st))
+	case ShapeHexagon:
+		m := h / 4
+		sc.Add(scene.NewPath(st).Polygon(scene.Pt(x+m, y), scene.Pt(x+w-m, y), scene.Pt(x+w, n.y),
+			scene.Pt(x+w-m, y+h), scene.Pt(x+m, y+h), scene.Pt(x, n.y)))
+	case ShapeCloud:
+		sc.Add(cloud(x, y, w, h, st))
+	case ShapeBang:
+		sc.Add(bang(x, y, w, h, st))
+	default:
+		sc.Add(scene.RectPath(x, y, w, h, math.Min(h/2, 14), st))
+	}
+	sc.Add(scene.NewText(n.x, n.y, n.wrapped, fontFor(n.depth, th), text, scene.AnchorMiddle, scene.VAlignMiddle))
+	for _, c := range n.Children {
+		drawNodes(sc, c, th)
+	}
+}
+
+// cloud draws a cloud-like outline made of arcs.
+func cloud(x, y, w, h float64, st scene.Style) *scene.Path {
+	p := scene.NewPath(st)
+	cx, cy := x+w/2, y+h/2
+	n := 10
+	rx, ry := w/2, h/2
+	pts := make([]scene.Point, n)
+	for i := 0; i < n; i++ {
+		a := 2 * math.Pi * float64(i) / float64(n)
+		pts[i] = scene.Pt(cx+rx*0.92*math.Cos(a), cy+ry*0.92*math.Sin(a))
+	}
+	p.MoveTo(pts[0].X, pts[0].Y)
+	for i := 0; i < n; i++ {
+		a, b := pts[i], pts[(i+1)%n]
+		mid := a.Add(b).Mul(0.5)
+		out := mid.Sub(scene.Pt(cx, cy)).Norm().Mul(math.Min(rx, ry) * 0.35)
+		c := mid.Add(out)
+		p.QuadTo(c.X, c.Y, b.X, b.Y)
+	}
+	return p.Close()
+}
+
+// bang draws an explosion-like star outline.
+func bang(x, y, w, h float64, st scene.Style) *scene.Path {
+	cx, cy := x+w/2, y+h/2
+	n := 12
+	var pts []scene.Point
+	for i := 0; i < 2*n; i++ {
+		a := math.Pi * float64(i) / float64(n)
+		f := 1.0
+		if i%2 == 1 {
+			f = 0.78
+		}
+		pts = append(pts, scene.Pt(cx+w/2*f*math.Cos(a), cy+h/2*f*math.Sin(a)))
+	}
+	return scene.NewPath(st).Polygon(pts...)
 }

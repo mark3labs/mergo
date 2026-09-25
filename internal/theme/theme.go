@@ -58,6 +58,9 @@ type Theme struct {
 
 	// Palette used by pie, journey, mindmap, timeline, gantt sections, gitGraph...
 	Palette []color.RGBA
+	// ChartPalette holds saturated colors for data series (xychart, gitGraph
+	// branches, quadrant points). Falls back to a Tableau-like palette.
+	ChartPalette []color.RGBA
 	// PaletteText is a readable text color for each palette entry.
 	PaletteText []color.RGBA
 
@@ -123,6 +126,7 @@ func (t *Theme) Clone() *Theme {
 	c.Palette = append([]color.RGBA(nil), t.Palette...)
 	c.PaletteText = append([]color.RGBA(nil), t.PaletteText...)
 	c.SectionBkg = append([]color.RGBA(nil), t.SectionBkg...)
+	c.ChartPalette = append([]color.RGBA(nil), t.ChartPalette...)
 	return &c
 }
 
@@ -136,6 +140,27 @@ func (t *Theme) PaletteColor(i int) color.RGBA {
 	}
 	return t.Palette[i%len(t.Palette)]
 }
+
+// ChartColor returns data series color i (wrapping around).
+func (t *Theme) ChartColor(i int) color.RGBA {
+	p := t.ChartPalette
+	if len(p) == 0 {
+		if t.Dark {
+			p = chartDark
+		} else {
+			p = chartLight
+		}
+	}
+	if i < 0 {
+		i = -i
+	}
+	return p[i%len(p)]
+}
+
+var (
+	chartLight = HexList("#4e79a7", "#f28e2b", "#e15759", "#59a14f", "#76b7b2", "#edc948", "#b07aa1", "#ff9da7", "#9c755f", "#7f7f7f")
+	chartDark  = HexList("#6ea8fe", "#ffa94d", "#ff6b6b", "#69db7c", "#63e6be", "#ffd43b", "#da77f2", "#f783ac", "#c0a080", "#adb5bd")
+)
 
 // PaletteTextColor returns a readable text color for palette entry i.
 func (t *Theme) PaletteTextColor(i int) color.RGBA {
@@ -279,6 +304,7 @@ func DarkTheme() *Theme {
 func Forest() *Theme {
 	return finish(&Theme{
 		Name:               "forest",
+		ChartPalette:       HexList("#2e7d32", "#9e9d24", "#00897b", "#558b2f", "#f9a825", "#6d4c41", "#43a047", "#827717", "#26a69a", "#795548"),
 		Background:         Hex("#ffffff"),
 		PrimaryColor:       Hex("#cde498"),
 		PrimaryTextColor:   Hex("#000000"),
@@ -336,6 +362,7 @@ func Forest() *Theme {
 func Neutral() *Theme {
 	return finish(&Theme{
 		Name:               "neutral",
+		ChartPalette:       HexList("#333333", "#777777", "#aaaaaa", "#555555", "#999999", "#444444", "#888888", "#666666", "#bbbbbb", "#222222"),
 		Background:         Hex("#ffffff"),
 		PrimaryColor:       Hex("#eeeeee"),
 		PrimaryTextColor:   Hex("#111111"),
@@ -393,6 +420,7 @@ func Neutral() *Theme {
 func Charm() *Theme {
 	return finish(&Theme{
 		Name:               "charm",
+		ChartPalette:       HexList("#6b50ff", "#ff60ff", "#12c78f", "#00a4ff", "#fe8e66", "#e8fe96", "#ff577d", "#68ffd6", "#ffd65b", "#8b75ff"),
 		Dark:               true,
 		Background:         Hex("#171721"),
 		PrimaryColor:       Hex("#2b2146"),
