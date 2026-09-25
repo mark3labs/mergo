@@ -25,12 +25,12 @@ func init() {
 // nodeStyle is the resolved visual style of a node or cluster.
 type nodeStyle struct {
 	fill, stroke, text color.RGBA
-	strokeW          float64
-	dash             []float64
-	bold, italic     bool
-	fontSize         float64
-	textSet          bool
-	fillSet          bool
+	strokeW            float64
+	dash               []float64
+	bold, italic       bool
+	fontSize           float64
+	textSet            bool
+	fillSet            bool
 }
 
 func applyCSS(ns *nodeStyle, css map[string]string) {

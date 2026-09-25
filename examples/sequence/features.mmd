@@ -1,0 +1,40 @@
+---
+title: Order fulfilment
+---
+sequenceDiagram
+    autonumber
+    box rgb(236,236,255) Storefront
+        actor C as Customer
+        participant W as Web shop
+    end
+    box rgb(255,245,220) Backend
+        participant O as Orders
+        participant DB@{ "type": "database" }
+        participant Q@{ "type": "queue", "alias": "Events" }
+    end
+    C->>+W: Place order
+    W->>+O: POST /orders
+    O->>DB: INSERT order
+    critical Reserve stock
+        O->>DB: UPDATE inventory
+    option Out of stock
+        O-->>W: 409 Conflict
+    end
+    rect rgba(0, 128, 255, 0.12)
+        par Notify
+            O-)Q: order.created
+        and Charge
+            create participant P as Payments
+            O->>+P: charge card
+            P-->>-O: approved
+            destroy P
+            O-xP: close session
+        end
+    end
+    loop Every 5s until shipped
+        W->>O: GET /orders/42
+        Note right of O: status polling
+    end
+    O-->>-W: 201 Created
+    W-->>-C: Confirmation e-mail
+    Note over C,W: Customer is happy
