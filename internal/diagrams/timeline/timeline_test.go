@@ -1,84 +1,30 @@
 package timeline
 
-import (
-	"testing"
+import "testing"
 
-	"github.com/mark3labs/mergo/internal/diagram"
-	"github.com/mark3labs/mergo/internal/theme"
-)
-
-func TestParseBasicTimeline(t *testing.T) {
-	src := `timeline
-    title History Test
-    2020 : Event A
-    2021 : Event B : Event C
-`
-
-	cfg := &diagram.Config{Theme: theme.Default()}
-	tl, err := Parse(src, cfg)
+func TestParse(t *testing.T) {
+	tl, err := Parse(`timeline TD
+    title History
+    section Early
+        2002 : LinkedIn
+        2004 : Facebook : Google
+             : Gmail
+    section Late
+        2006 : Twitter`)
 	if err != nil {
-		t.Fatalf("Parse failed: %v", err)
+		t.Fatal(err)
 	}
-
-	if tl.Title != "History Test" {
-		t.Errorf("Title = %q, want %q", tl.Title, "History Test")
+	if !tl.Vertical || tl.Title != "History" || len(tl.Sections) != 2 || len(tl.Periods) != 3 {
+		t.Fatalf("%+v", tl)
 	}
-
-	if len(tl.AllPeriods) != 2 {
-		t.Errorf("Number of periods = %d, want 2", len(tl.AllPeriods))
+	p := tl.Periods[1]
+	if p.Label != "2004" || len(p.Events) != 3 || p.Events[2] != "Gmail" || p.Section != 0 {
+		t.Errorf("period %+v", p)
 	}
-
-	if len(tl.AllPeriods[1].Events) != 2 {
-		t.Errorf("Events in period 2 = %d, want 2", len(tl.AllPeriods[1].Events))
+	if tl.Periods[2].Section != 1 {
+		t.Error("section index")
 	}
-}
-
-func TestParseTimelineWithSections(t *testing.T) {
-	src := `timeline
-    title Test with sections
-    section Era1
-        Period1 : Event1
-    section Era2
-        Period2 : Event2
-`
-
-	cfg := &diagram.Config{Theme: theme.Default()}
-	tl, err := Parse(src, cfg)
-	if err != nil {
-		t.Fatalf("Parse failed: %v", err)
-	}
-
-	if len(tl.Sections) != 2 {
-		t.Errorf("Number of sections = %d, want 2", len(tl.Sections))
-	}
-
-	if tl.Sections[0].Name != "Era1" {
-		t.Errorf("Section 0 name = %q, want %q", tl.Sections[0].Name, "Era1")
-	}
-}
-
-func TestRenderTimeline(t *testing.T) {
-	src := `timeline
-    title Test Timeline
-    2020 : Event A
-    2021 : Event B
-`
-
-	cfg := &diagram.Config{Theme: theme.Default()}
-	sc, err := Render(src, cfg)
-	if err != nil {
-		t.Fatalf("Render failed: %v", err)
-	}
-
-	if sc == nil {
-		t.Fatal("Scene is nil")
-	}
-
-	if sc.Width <= 0 || sc.Height <= 0 {
-		t.Errorf("Scene size = %gx%g, want > 0", sc.Width, sc.Height)
-	}
-
-	if len(sc.Items) == 0 {
-		t.Error("Scene has no items")
+	if _, err := Parse("timeline\n: orphan"); err == nil {
+		t.Error("expected error for orphan event")
 	}
 }
