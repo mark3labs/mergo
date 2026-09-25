@@ -2,6 +2,10 @@
 
 **Beautiful Mermaid diagrams in your terminal.** Real graphics, not ASCII art.
 
+![mergo demo: flipping through diagram types, zooming, and live-previewing themes](docs/demo.gif)
+
+<sub>Recorded with [VHS](https://github.com/charmbracelet/vhs) ([`docs/demo.tape`](docs/demo.tape)) using the half-block fallback, since VHS's terminal has no kitty graphics; kitty, Ghostty, WezTerm and Konsole show diagrams at full resolution.</sub>
+
 mergo parses [Mermaid](https://mermaid.js.org) diagrams, lays them out and
 rasterizes them **natively in Go** — no browser, no Node.js, no
 `mermaid-cli`. The result is displayed in the terminal using the
