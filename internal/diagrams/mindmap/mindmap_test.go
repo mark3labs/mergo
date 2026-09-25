@@ -92,14 +92,14 @@ func TestLargeTreeNoOverlap(t *testing.T) {
 	for i := range all {
 		for j := i + 1; j < len(all); j++ {
 			a, b := all[i], all[j]
-			if math(a.x-a.w/2, b.x+b.w/2) && math(b.x-b.w/2, a.x+a.w/2) && math(a.y-a.h/2, b.y+b.h/2) && math(b.y-b.h/2, a.y+a.h/2) {
+			if lt(a.x-a.w/2, b.x+b.w/2) && lt(b.x-b.w/2, a.x+a.w/2) && lt(a.y-a.h/2, b.y+b.h/2) && lt(b.y-b.h/2, a.y+a.h/2) {
 				t.Errorf("%q overlaps %q", a.Label, b.Label)
 			}
 		}
 	}
 }
 
-func math(a, b float64) bool { return a < b-0.5 }
+func lt(a, b float64) bool { return a < b-0.5 }
 
 func TestExamples(t *testing.T) {
 	files, _ := filepath.Glob("../../../examples/mindmap/*.mmd")
