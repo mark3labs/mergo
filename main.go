@@ -124,11 +124,11 @@ func typesCmd() *cobra.Command {
 			var sb strings.Builder
 			sb.WriteString("Diagram types:\n")
 			for _, t := range mermaid.Types() {
-				sb.WriteString("  • " + t + "\n")
+				fmt.Fprintf(&sb, "  • %s\n", t)
 			}
 			sb.WriteString("\nThemes:\n")
 			for _, t := range theme.Names() {
-				sb.WriteString("  • " + t + "\n")
+				fmt.Fprintf(&sb, "  • %s\n", t)
 			}
 			_, err := fmt.Fprint(cmd.OutOrStdout(), sb.String())
 			return err
@@ -194,10 +194,10 @@ func themesCmd() *cobra.Command {
 				if n == current {
 					mark = "* "
 				}
-				b.WriteString(mark + n + "\n")
+				fmt.Fprintf(&b, "%s%s\n", mark, n)
 			}
 			if p, err := config.Path(); err == nil {
-				b.WriteString("\nsettings: " + p + "\n")
+				fmt.Fprintf(&b, "\nsettings: %s\n", p)
 			}
 			_, err = fmt.Fprint(cmd.OutOrStdout(), b.String())
 			return err
