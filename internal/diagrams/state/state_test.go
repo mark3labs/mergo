@@ -182,7 +182,7 @@ func TestExamplesGeometry(t *testing.T) {
 				t.Errorf("%s: %s escapes composite %s", f, id, s.Parent)
 			}
 		}
-		sc, err := diagram.Render(string(b), theme.MustGet("forest"))
+		sc, err := diagram.Render(string(b), theme.Forest())
 		if err != nil {
 			t.Fatal(err)
 		}

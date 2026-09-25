@@ -187,7 +187,7 @@ func TestExamples(t *testing.T) {
 				}
 			}
 		}
-		sc, err := diagram.Render(string(b), theme.MustGet("dark"))
+		sc, err := diagram.Render(string(b), theme.DarkTheme())
 		if err != nil {
 			t.Fatalf("%s: %v", f, err)
 		}

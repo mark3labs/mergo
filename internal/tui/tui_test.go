@@ -13,6 +13,7 @@ import (
 	"github.com/charmbracelet/x/ansi/kitty"
 
 	_ "github.com/mark3labs/mergo/internal/mermaid" // register diagram types
+	"github.com/mark3labs/mergo/internal/theme"
 )
 
 func TestExtractMermaidBlocks(t *testing.T) {
@@ -213,7 +214,7 @@ func TestParseRenderer(t *testing.T) {
 // without a terminal.
 func TestModelFlow(t *testing.T) {
 	ds := parseInput("x.mmd", "graph LR\nA[Hello] --> B{World}")
-	m := NewModel([]string{"x.mmd"}, ds, Options{Theme: "default", Placement: PlacementUnicode})
+	m := NewModel([]string{"x.mmd"}, ds, Options{Theme: "nord", Placement: PlacementUnicode})
 	m.cell = CellSize{W: 10, H: 20}
 	m.cellFromTerm = true
 
@@ -312,7 +313,7 @@ func TestModelFlow(t *testing.T) {
 
 	// errors are shown with the offending line
 	bad := parseInput("y.mmd", "graph LR\nA --> B\nA -->")
-	m2 := NewModel([]string{"y.mmd"}, bad, Options{Theme: "default", Renderer: RendererHalfBlock})
+	m2 := NewModel([]string{"y.mmd"}, bad, Options{Theme: "nord", Renderer: RendererHalfBlock})
 	m2.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	for _, msg := range run(m2.ensureScene()) {
 		m2.Update(msg)
@@ -321,4 +322,91 @@ func TestModelFlow(t *testing.T) {
 	if !strings.Contains(v, "line 3") || !strings.Contains(v, "A -->") {
 		t.Errorf("error view missing details:\n%s", ansi.Strip(v))
 	}
+}
+
+func TestThemePicker(t *testing.T) {
+	ds := parseInput("x.mmd", "graph LR\nA --> B")
+	var saved []string
+	m := NewModel([]string{"x.mmd"}, ds, Options{
+		Theme: "nord", Renderer: RendererHalfBlock,
+		SaveTheme: func(name string) error { saved = append(saved, name); return nil },
+	})
+	m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	key := func(code rune, text string) { m.Update(tea.KeyPressMsg{Code: code, Text: text}) }
+
+	// t opens the picker on the active theme; moving previews without saving
+	key('t', "t")
+	if !m.picker.open || m.themes[m.picker.idx] != "nord" {
+		t.Fatalf("picker open=%v idx=%d", m.picker.open, m.picker.idx)
+	}
+	key(tea.KeyDown, "")
+	preview := m.themeName()
+	if preview == "nord" || len(saved) != 0 {
+		t.Fatalf("preview = %q, saved = %v", preview, saved)
+	}
+	view := m.render()
+	if !strings.Contains(view, "Theme") || !strings.Contains(view, preview) {
+		t.Error("picker not rendered")
+	}
+	for i, l := range strings.Split(view, "\n") {
+		if w := ansi.StringWidth(l); w > 80 {
+			t.Errorf("view line %d overflows: width %d", i, w)
+		}
+	}
+
+	// esc restores the original theme and keeps the viewer running
+	key(tea.KeyEscape, "")
+	if m.picker.open || m.themeName() != "nord" || len(saved) != 0 {
+		t.Fatalf("after cancel: open=%v theme=%q saved=%v", m.picker.open, m.themeName(), saved)
+	}
+
+	// enter keeps and persists the selection
+	key('t', "t")
+	key(tea.KeyDown, "")
+	key(tea.KeyEnter, "")
+	if m.picker.open || m.themeName() != preview || len(saved) != 1 || saved[0] != preview {
+		t.Fatalf("after confirm: open=%v theme=%q saved=%v", m.picker.open, m.themeName(), saved)
+	}
+
+	// clicking an entry picks it
+	key('t', "t")
+	m.render()
+	_, _ = m.Update(tea.MouseClickMsg{X: m.picker.box.Min.X + 3, Y: m.picker.first, Button: tea.MouseLeft})
+	if m.picker.open || m.themeName() != m.themes[m.picker.top] || len(saved) != 2 {
+		t.Fatalf("after click: open=%v theme=%q saved=%v", m.picker.open, m.themeName(), saved)
+	}
+}
+
+func TestChromeFollowsTheme(t *testing.T) {
+	ds := parseInput("x.mmd", "graph LR\nA --> B")
+	m := NewModel([]string{"x.mmd"}, ds, Options{Theme: "nord", Dark: true, Renderer: RendererHalfBlock})
+	m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	bg := func() color.Color { return m.st.bar.GetBackground() }
+	nord := bg()
+	want, _ := theme.Palette("nord", true)
+	if !sameColor(nord, want.Faint) {
+		t.Fatalf("bar background = %v, want nord's %v", nord, want.Faint)
+	}
+	// previewing a theme in the picker restyles the chrome; cancel restores it
+	m.Update(tea.KeyPressMsg{Code: 't', Text: "t"})
+	m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+	if sameColor(bg(), nord) {
+		t.Error("chrome not restyled for the previewed theme")
+	}
+	m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	if !sameColor(bg(), nord) {
+		t.Error("chrome not restored after cancel")
+	}
+	// the light variant uses the light palette
+	light := NewModel([]string{"x.mmd"}, ds, Options{Theme: "nord", Renderer: RendererHalfBlock})
+	lp, _ := theme.Palette("nord", false)
+	if !sameColor(light.st.bar.GetBackground(), lp.Faint) {
+		t.Error("light variant not used")
+	}
+}
+
+func sameColor(a, b color.Color) bool {
+	r1, g1, b1, a1 := a.RGBA()
+	r2, g2, b2, a2 := b.RGBA()
+	return r1 == r2 && g1 == g2 && b1 == b2 && a1 == a2
 }

@@ -25,9 +25,15 @@ Built with the Charm stack: [Bubble Tea v2](https://github.com/charmbracelet/bub
 - **Professional output**: layered (Sugiyama) graph layout with nested
   clusters, spline edges, proper arrowheads, crow's feet, UML markers,
   anti-aliased text, subtle drop shadows.
-- **Themes**: `default`, `dark`, `forest`, `neutral` (Mermaid's) plus `charm`.
+- **Themes**: the same 23 themes as [gopyter](https://github.com/mark3labs/gopyter)
+  and kit (`mergo`, `catppuccin`, `dracula`, `nord`, `gruvbox`, `tokyonight`, …),
+  each with a light and a dark variant that follows the terminal background.
+  The viewer's bars, panels and picker are drawn in the theme's colors too.
+  Mermaid's `default`, `dark`, `forest` and `neutral` stay available through
+  `%%{init: {"theme": "…"}}%%` directives.
 - **Interactive viewer**: zoom, pan (keys or mouse drag / wheel), fit, switch
-  between diagrams, live reload on save, cycle themes, export PNG.
+  between diagrams, live reload on save, theme picker with live preview,
+  export PNG.
 - **Kitty graphics via Unicode placeholders**: the image is transmitted once
   and drawn with placeholder cells, so it cooperates perfectly with Bubble
   Tea's cell renderer (overlays, help, error panels all compose on top).
@@ -49,15 +55,18 @@ go install github.com/mark3labs/mergo@latest
 mergo diagram.mmd                 # interactive viewer
 mergo README.md                   # every mermaid block, tab to switch
 cat flow.mmd | mergo              # from stdin
-mergo -t dark flow.mmd            # pick a theme
+mergo -t dracula flow.mmd         # use a theme for this run
 mergo -p flow.mmd                 # print inline and exit
 mergo -o flow.png --scale 3 flow.mmd   # export PNG
+mergo -o flow.png --background light flow.mmd  # light variant
 mergo types                       # list diagram types and themes
+mergo themes                      # list themes, marking the active one
 ```
 
 | Flag | Description |
 | --- | --- |
-| `-t, --theme` | `default`, `dark`, `forest`, `neutral`, `charm` |
+| `-t, --theme` | theme for this run (see `mergo themes`), overriding the saved one |
+| `--background` | `auto` (default: follow the terminal), `dark` or `light` theme variant |
 | `-r, --renderer` | `auto` (default), `kitty` or `halfblock` |
 | `--kitty-placement` | `auto` (default), `unicode` (placeholders) or `direct` |
 | `-p, --print` | print inline and exit |
@@ -78,12 +87,20 @@ mergo types                       # list diagram types and themes
 | `0` / `f` | fit to window |
 | `1` | 100% (one diagram pixel per terminal pixel) |
 | `tab` / `n`, `shift+tab` / `p` | next / previous diagram |
-| `t` | cycle theme |
+| `t` | theme picker: `↑↓` previews, `enter` applies and saves, `esc` cancels |
 | `r` | toggle kitty / half-block renderer |
 | `s` | save the current diagram as PNG next to its source |
 | `R` | reload |
 | `?` | help |
 | `q` | quit |
+
+### Settings
+
+The theme picked in the viewer is saved to
+`$XDG_CONFIG_HOME/mergo/config.json` (usually `~/.config/mergo/config.json`)
+and used by default by the viewer, `--print` and `--output`. Without
+`XDG_CONFIG_HOME` the platform default is used (`~/Library/Application
+Support/mergo` on macOS).
 
 ## Terminal support
 
@@ -149,7 +166,7 @@ is on by default), and the host terminal must support it.
 ```sh
 go test ./...
 go run ./cmd/mmdpng -ascii 140 examples/flowchart/cicd.mmd   # ASCII preview of a render
-go run ./cmd/mmdpng -theme dark examples/state/concurrency.mmd out.png
+go run ./cmd/mmdpng -theme nord examples/state/concurrency.mmd out.png
 ```
 
 See [docs/ENGINE.md](docs/ENGINE.md) for the architecture of the rendering

@@ -305,8 +305,8 @@ func TestExamplesRender(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, thn := range []string{"default", "dark"} {
-			sc, err := diagram.Render(string(b), theme.MustGet(thn))
+		for _, th := range []*theme.Theme{theme.Default(), theme.DarkTheme(), theme.MustGet(theme.DefaultName, true)} {
+			sc, err := diagram.Render(string(b), th)
 			if err != nil {
 				t.Errorf("%s: %v", f, err)
 				continue
@@ -314,7 +314,7 @@ func TestExamplesRender(t *testing.T) {
 			if sc.Width < 50 || sc.Height < 30 || sc.Width > 8000 || sc.Height > 8000 {
 				t.Errorf("%s: suspicious size %.0fx%.0f", f, sc.Width, sc.Height)
 			}
-			if testing.Verbose() && thn == "default" {
+			if testing.Verbose() && th.Name == "default" {
 				img := sc.Render(scene.RenderOptions{Scale: 1})
 				t.Logf("%s\n%s", f, devutil.ASCII(img, 120))
 			}

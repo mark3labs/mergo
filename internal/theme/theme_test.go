@@ -27,25 +27,59 @@ func TestParseColor(t *testing.T) {
 }
 
 func TestThemes(t *testing.T) {
-	for _, n := range Names() {
-		th, err := Get(n)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(th.Palette) == 0 || th.FontSize == 0 || len(th.PaletteText) != len(th.Palette) {
-			t.Errorf("%s incomplete", n)
-		}
-		// primary text must be readable on the primary color
-		if d := Luminance(th.PrimaryColor) - Luminance(th.PrimaryTextColor); d*d < 0.1 {
-			t.Errorf("%s: poor primary contrast", n)
-		}
-		c := th.Clone()
-		c.Palette[0] = color.RGBA{}
-		if th.Palette[0] == (color.RGBA{}) {
-			t.Error("Clone is shallow")
+	names := Names()
+	if names[0] != DefaultName || len(names) != 23 {
+		t.Fatalf("names = %v", names)
+	}
+	for _, n := range names {
+		for _, dark := range []bool{false, true} {
+			th, err := Get(n, dark)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if th.Name != n || th.Dark != dark {
+				t.Errorf("%s/%v: got name %q dark %v", n, dark, th.Name, th.Dark)
+			}
+			if len(th.Palette) == 0 || th.FontSize == 0 || len(th.PaletteText) != len(th.Palette) {
+				t.Errorf("%s/%v incomplete", n, dark)
+			}
+			// text must be readable on node fills and the background
+			for what, bg := range map[string]color.RGBA{"primary": th.PrimaryColor, "background": th.Background} {
+				if r := contrast(bg, th.PrimaryTextColor); r < 4 {
+					t.Errorf("%s/%v: poor contrast on %s: %.2f", n, dark, what, r)
+				}
+			}
+			if dark != (Luminance(th.Background) < 0.3) {
+				t.Errorf("%s/%v: background %v doesn't match the variant", n, dark, th.Background)
+			}
+			c := th.Clone()
+			c.Palette[0] = color.RGBA{}
+			if th.Palette[0] == (color.RGBA{}) {
+				t.Error("Clone is shallow")
+			}
 		}
 	}
-	if _, err := Get("unknown"); err == nil {
+	if _, err := Get("unknown", true); err == nil {
 		t.Error("expected error")
 	}
+	if MustGet("unknown", true).Name != DefaultName {
+		t.Error("MustGet should fall back to the default theme")
+	}
+}
+
+func TestMermaidThemes(t *testing.T) {
+	for _, n := range []string{"default", "dark", "forest", "neutral"} {
+		if th, err := Mermaid(n); err != nil || th.Name != n {
+			t.Errorf("Mermaid(%q) = %v, %v", n, th, err)
+		}
+	}
+	if _, err := Mermaid("nord"); err == nil {
+		t.Error("nord is not a mermaid theme")
+	}
+}
+
+// contrast is the WCAG contrast ratio of two colors.
+func contrast(a, b color.RGBA) float64 {
+	la, lb := Luminance(a)+0.05, Luminance(b)+0.05
+	return max(la, lb) / min(la, lb)
 }

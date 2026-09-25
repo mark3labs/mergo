@@ -262,7 +262,7 @@ func Render(src string, th *theme.Theme) (*scene.Scene, error) {
 	}
 	th = th.Clone()
 	if tn, ok := doc.Raw["theme"].(string); ok {
-		if t2, err := theme.Get(tn); err == nil && tn != "default" {
+		if t2, err := theme.Mermaid(tn); err == nil && tn != "default" {
 			th = t2
 		}
 	}

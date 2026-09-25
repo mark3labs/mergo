@@ -14,6 +14,7 @@ import (
 	"github.com/charmbracelet/x/term"
 	"github.com/spf13/cobra"
 
+	"github.com/mark3labs/mergo/internal/config"
 	"github.com/mark3labs/mergo/internal/mermaid"
 	"github.com/mark3labs/mergo/internal/scene"
 	"github.com/mark3labs/mergo/internal/theme"
@@ -23,18 +24,19 @@ import (
 var version = "dev"
 
 type flags struct {
-	theme     string
-	renderer  string
-	placement string
-	output    string
-	index     int
-	print     bool
-	scale     float64
-	width     int
-	font      string
-	fontBold  string
-	noShadows bool
-	noWatch   bool
+	theme      string
+	background string
+	renderer   string
+	placement  string
+	output     string
+	index      int
+	print      bool
+	scale      float64
+	width      int
+	font       string
+	fontBold   string
+	noShadows  bool
+	noWatch    bool
 }
 
 func main() {
@@ -71,11 +73,17 @@ Inputs can be Mermaid files (.mmd, .mermaid), Markdown files (every
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			name, err := resolveTheme(cmd, f.theme, loadSettings(cmd))
+			if err != nil {
+				return err
+			}
+			f.theme = name
 			return run(cmd.Context(), args, f)
 		},
 	}
 	fl := cmd.Flags()
-	fl.StringVarP(&f.theme, "theme", "t", "default", "diagram theme ("+strings.Join(theme.Names(), ", ")+")")
+	fl.StringVarP(&f.theme, "theme", "t", "", "diagram theme for this run ("+strings.Join(theme.Names(), ", ")+"); the saved theme is used by default")
+	fl.StringVar(&f.background, "background", "auto", "theme variant: auto (follow the terminal background), dark or light")
 	fl.StringVarP(&f.renderer, "renderer", "r", "auto", "image renderer: auto, kitty or halfblock")
 	fl.StringVar(&f.placement, "kitty-placement", "auto", "kitty image placement: auto, unicode (placeholders) or direct (zellij, WezTerm, Konsole)")
 	fl.StringVarP(&f.output, "output", "o", "", "export the diagram as PNG to this path and exit (- for stdout)")
@@ -91,6 +99,9 @@ Inputs can be Mermaid files (.mmd, .mermaid), Markdown files (every
 	_ = cmd.RegisterFlagCompletionFunc("theme", func(*cobra.Command, []string, string) ([]string, cobra.ShellCompDirective) {
 		return theme.Names(), cobra.ShellCompDirectiveNoFileComp
 	})
+	_ = cmd.RegisterFlagCompletionFunc("background", func(*cobra.Command, []string, string) ([]string, cobra.ShellCompDirective) {
+		return []string{"auto", "dark", "light"}, cobra.ShellCompDirectiveNoFileComp
+	})
 	_ = cmd.RegisterFlagCompletionFunc("renderer", func(*cobra.Command, []string, string) ([]string, cobra.ShellCompDirective) {
 		return []string{"auto", "kitty", "halfblock"}, cobra.ShellCompDirectiveNoFileComp
 	})
@@ -100,7 +111,7 @@ Inputs can be Mermaid files (.mmd, .mermaid), Markdown files (every
 	cmd.ValidArgsFunction = func(*cobra.Command, []string, string) ([]string, cobra.ShellCompDirective) {
 		return []string{"mmd", "mermaid", "md", "markdown"}, cobra.ShellCompDirectiveFilterFileExt
 	}
-	cmd.AddCommand(typesCmd())
+	cmd.AddCommand(typesCmd(), themesCmd())
 	return cmd
 }
 
@@ -125,8 +136,95 @@ func typesCmd() *cobra.Command {
 	}
 }
 
+// defaultTheme is used when neither --theme nor a saved theme is set.
+const defaultTheme = theme.DefaultName
+
+// loadSettings reads the saved settings. Errors are only reported, so a
+// broken config never prevents mergo from starting.
+func loadSettings(cmd *cobra.Command) config.Settings {
+	s, err := config.Load()
+	if err != nil {
+		cmd.PrintErrf("mergo: reading settings: %v\n", err)
+		return config.Settings{}
+	}
+	return s
+}
+
+// resolveTheme picks the diagram theme: the --theme flag, else the saved
+// one, else the default. A bad flag is an error; a bad saved value only a
+// warning, so a stale config never prevents mergo from starting.
+func resolveTheme(cmd *cobra.Command, flag string, s config.Settings) (string, error) {
+	if flag != "" {
+		if !theme.Valid(flag) {
+			return "", fmt.Errorf("unknown theme %q (available: %s)", flag, strings.Join(theme.Names(), ", "))
+		}
+		return strings.ToLower(strings.TrimSpace(flag)), nil
+	}
+	if s.Theme == "" {
+		return defaultTheme, nil
+	}
+	if !theme.Valid(s.Theme) {
+		cmd.PrintErrf("mergo: unknown saved theme %q, using %s\n", s.Theme, defaultTheme)
+		return defaultTheme, nil
+	}
+	return s.Theme, nil
+}
+
+// saveTheme persists the theme picked in the viewer.
+func saveTheme(name string) error {
+	return config.Update(func(s *config.Settings) { s.Theme = name })
+}
+
+func themesCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "themes",
+		Short: "List the available diagram themes",
+		Long: "List the available diagram themes. The active one is marked with *.\n\n" +
+			"Pick a theme in the viewer with t; the choice is saved to\n" +
+			"$XDG_CONFIG_HOME/mergo/config.json. --theme overrides it for one run.",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			current, err := resolveTheme(cmd, "", loadSettings(cmd))
+			if err != nil {
+				return err
+			}
+			var b strings.Builder
+			for _, n := range theme.Names() {
+				mark := "  "
+				if n == current {
+					mark = "* "
+				}
+				b.WriteString(mark + n + "\n")
+			}
+			if p, err := config.Path(); err == nil {
+				b.WriteString("\nsettings: " + p + "\n")
+			}
+			_, err = fmt.Fprint(cmd.OutOrStdout(), b.String())
+			return err
+		},
+	}
+}
+
+// darkBackground resolves --background. auto asks the terminal for its
+// background color, like gopyter; without a terminal to ask it assumes dark.
+func darkBackground(mode string) (bool, error) {
+	switch mode {
+	case "dark":
+		return true, nil
+	case "light":
+		return false, nil
+	case "auto", "":
+	default:
+		return false, fmt.Errorf("unknown background %q (want auto, dark or light)", mode)
+	}
+	return tui.DarkBackground(), nil
+}
+
 func run(ctx context.Context, args []string, f flags) error {
-	if _, err := theme.Get(f.theme); err != nil {
+	// Probe before the TUI takes over the terminal, so the query can't race
+	// the program's input reader.
+	dark, err := darkBackground(f.background)
+	if err != nil {
 		return err
 	}
 	rend, ok := tui.ParseRenderer(f.renderer)
@@ -164,7 +262,7 @@ func run(ctx context.Context, args []string, f flags) error {
 		}
 		d := diagrams[f.index-1]
 		if f.output != "" {
-			if err := tui.Export(f.output, d, f.theme, f.scale, f.noShadows); err != nil {
+			if err := tui.Export(f.output, d, f.theme, dark, f.scale, f.noShadows); err != nil {
 				return err
 			}
 			if f.output != "-" {
@@ -173,7 +271,7 @@ func run(ctx context.Context, args []string, f flags) error {
 		}
 		if f.print {
 			return tui.Print(os.Stdout, d, tui.PrintOptions{
-				Theme: f.theme, Renderer: rend, NoShadows: f.noShadows, Width: f.width,
+				Theme: f.theme, Dark: dark, Renderer: rend, NoShadows: f.noShadows, Width: f.width,
 			})
 		}
 		return nil
@@ -181,9 +279,11 @@ func run(ctx context.Context, args []string, f flags) error {
 
 	return tui.Run(ctx, paths, diagrams, tui.Options{
 		Theme:     f.theme,
+		Dark:      dark,
 		Renderer:  rend,
 		NoShadows: f.noShadows,
 		Placement: placement,
 		Watch:     !f.noWatch,
+		SaveTheme: saveTheme,
 	})
 }

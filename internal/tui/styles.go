@@ -2,9 +2,14 @@ package tui
 
 import (
 	"image/color"
+	"strings"
 
+	"charm.land/bubbles/v2/help"
 	"charm.land/bubbles/v2/key"
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
+
+	"github.com/mark3labs/mergo/internal/theme"
 )
 
 // keyMap holds all key bindings.
@@ -39,7 +44,7 @@ func defaultKeys() keyMap {
 		Down:     key.NewBinding(key.WithKeys("j", "down"), key.WithHelp("↓/j", "pan down")),
 		Next:     key.NewBinding(key.WithKeys("tab", "n", "]"), key.WithHelp("tab/n", "next diagram")),
 		Prev:     key.NewBinding(key.WithKeys("shift+tab", "p", "["), key.WithHelp("⇧tab/p", "prev diagram")),
-		Theme:    key.NewBinding(key.WithKeys("t"), key.WithHelp("t", "theme")),
+		Theme:    key.NewBinding(key.WithKeys("t"), key.WithHelp("t", "pick theme")),
 		Renderer: key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "renderer")),
 		Save:     key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "save png")),
 		Reload:   key.NewBinding(key.WithKeys("R", "ctrl+r"), key.WithHelp("R", "reload")),
@@ -63,23 +68,8 @@ func (k keyMap) FullHelp() [][]key.Binding {
 	}
 }
 
-// Palette used for the application chrome (Charm-ish).
-var (
-	colCharple  = lipgloss.Color("#6B50FF")
-	colDolly    = lipgloss.Color("#FF60FF")
-	colJulep    = lipgloss.Color("#00FFB2")
-	colCherry   = lipgloss.Color("#FF388B")
-	colSquid    = lipgloss.Color("#858392")
-	colSmoke    = lipgloss.Color("#BFBCC8")
-	colAsh      = lipgloss.Color("#DFDBDD")
-	colPepper   = lipgloss.Color("#201F26")
-	colIron     = lipgloss.Color("#4D4C57")
-	colCharcoal = lipgloss.Color("#3A3943")
-	colButter   = lipgloss.Color("#FFFAF1")
-	colMalibu   = lipgloss.Color("#00A4FF")
-	colZest     = lipgloss.Color("#E8FE96")
-)
-
+// styles draw the viewer's chrome. They are derived from the UI palette of
+// the active theme, so the interface matches the diagram (as in gopyter).
 type styles struct {
 	bar         lipgloss.Style
 	logo        lipgloss.Style
@@ -88,45 +78,108 @@ type styles struct {
 	statusKey   lipgloss.Style
 	statusVal   lipgloss.Style
 	statusDim   lipgloss.Style
-	pill        func(bg color.Color) lipgloss.Style
+	kindPill    lipgloss.Style
+	kittyPill   lipgloss.Style
+	blockPill   lipgloss.Style
 	errBox      lipgloss.Style
 	errTitle    lipgloss.Style
+	errMsg      lipgloss.Style
 	errCode     lipgloss.Style
 	errLineNo   lipgloss.Style
 	toast       lipgloss.Style
+	toastErr    lipgloss.Style
 	helpBox     lipgloss.Style
+	help        help.Styles
 	placeholder lipgloss.Style
+	// panelBg is the background of boxes (the theme background).
+	panelBg color.Color
+
+	// theme picker
+	pickBox   lipgloss.Style
+	pickTitle lipgloss.Style
+	pickItem  lipgloss.Style
+	pickSel   lipgloss.Style
+	pickCur   lipgloss.Style
+	pickKey   lipgloss.Style
+	pickDim   lipgloss.Style
 }
 
-func newStyles() styles {
-	bar := lipgloss.NewStyle().Background(colPepper).Foreground(colSmoke)
+func newStyles(p theme.UI) styles {
+	s := lipgloss.NewStyle
+	// Panels sit on the theme background; the bars on a slightly raised
+	// surface, like gopyter's.
+	panel := s().Background(p.Ink)
+	bar := s().Background(p.Faint).Foreground(p.Dim)
+	pill := func(bg color.Color) lipgloss.Style {
+		return s().Background(bg).Foreground(p.Ink).Bold(true).Padding(0, 1)
+	}
+	box := func(border color.Color) lipgloss.Style {
+		return panel.
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(border).
+			BorderBackground(p.Ink)
+	}
+	helpKey := panel.Foreground(p.Dim).Bold(true)
+	helpDesc := panel.Foreground(p.Muted)
+	helpSep := panel.Foreground(p.Subtle)
 	return styles{
 		bar:       bar,
-		logo:      lipgloss.NewStyle().Background(colCharple).Foreground(colButter).Bold(true).Padding(0, 1),
-		tab:       bar.Foreground(colSquid).Padding(0, 1),
-		tabActive: lipgloss.NewStyle().Background(colCharcoal).Foreground(colDolly).Bold(true).Padding(0, 1),
-		statusKey: bar.Foreground(colSquid),
-		statusVal: bar.Foreground(colAsh),
-		statusDim: bar.Foreground(colIron),
-		pill: func(bg color.Color) lipgloss.Style {
-			return lipgloss.NewStyle().Background(bg).Foreground(colPepper).Bold(true).Padding(0, 1)
+		logo:      pill(p.Primary),
+		tab:       bar.Foreground(p.Muted).Padding(0, 1),
+		tabActive: s().Background(p.Selection).Foreground(p.Text).Bold(true).Padding(0, 1),
+		statusKey: bar.Foreground(p.Muted),
+		statusVal: bar.Foreground(p.Text),
+		statusDim: bar.Foreground(p.Subtle),
+		kindPill:  pill(p.Info),
+		kittyPill: pill(p.Success),
+		blockPill: pill(p.Warning),
+
+		errBox:    box(p.Error).Foreground(p.Text).Padding(1, 2),
+		errTitle:  panel.Foreground(p.Error).Bold(true),
+		errMsg:    panel.Foreground(p.Text),
+		errCode:   panel.Foreground(p.Warning),
+		errLineNo: panel.Foreground(p.Muted),
+
+		toast:    pill(p.Success),
+		toastErr: pill(p.Error),
+
+		helpBox: box(p.Primary).Padding(0, 2),
+		help: help.Styles{
+			Ellipsis:       helpSep,
+			ShortKey:       helpKey,
+			ShortDesc:      helpDesc,
+			ShortSeparator: helpSep,
+			FullKey:        helpKey,
+			FullDesc:       helpDesc,
+			FullSeparator:  helpSep,
 		},
-		errBox: lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(colCherry).
-			Background(colPepper).
-			Foreground(colAsh).
-			Padding(1, 2),
-		errTitle:  lipgloss.NewStyle().Foreground(colCherry).Background(colPepper).Bold(true),
-		errCode:   lipgloss.NewStyle().Foreground(colZest).Background(colPepper),
-		errLineNo: lipgloss.NewStyle().Foreground(colSquid).Background(colPepper),
-		toast: lipgloss.NewStyle().
-			Background(colJulep).Foreground(colPepper).Bold(true).Padding(0, 1),
-		helpBox: lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(colCharple).
-			Background(colPepper).
-			Padding(0, 2),
-		placeholder: lipgloss.NewStyle().Foreground(colSquid),
+		placeholder: s().Foreground(p.Muted),
+		panelBg:     p.Ink,
+
+		pickBox:   box(p.Primary),
+		pickTitle: panel.Foreground(p.Primary).Bold(true),
+		pickItem:  panel.Foreground(p.Text),
+		pickSel:   s().Background(p.Primary).Foreground(p.Ink).Bold(true),
+		pickCur:   panel.Foreground(p.Primary),
+		pickKey:   helpKey,
+		pickDim:   helpDesc,
 	}
+}
+
+// fillPanel paints content on bg: gaps left by resets inside styled text
+// and short lines (which lipgloss pads with unstyled spaces) would otherwise
+// show the terminal's background instead of the theme's.
+func fillPanel(content string, bg color.Color) string {
+	on := ansi.Style{}.BackgroundColor(bg).String()
+	lines := strings.Split(content, "\n")
+	w := 0
+	for _, l := range lines {
+		w = max(w, ansi.StringWidth(l))
+	}
+	for i, l := range lines {
+		l = strings.ReplaceAll(l, "\x1b[m", "\x1b[m"+on)
+		l = strings.ReplaceAll(l, "\x1b[0m", "\x1b[0m"+on)
+		lines[i] = on + l + strings.Repeat(" ", w-ansi.StringWidth(l)) + "\x1b[m"
+	}
+	return strings.Join(lines, "\n")
 }

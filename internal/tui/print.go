@@ -25,7 +25,9 @@ func Run(ctx context.Context, paths []string, diagrams []*Diagram, opts Options)
 
 // PrintOptions configures Print.
 type PrintOptions struct {
-	Theme     string
+	Theme string
+	// Dark selects the dark variant of the theme.
+	Dark      bool
 	Renderer  Renderer
 	NoShadows bool
 	// Width in cells (0 = terminal width).
@@ -36,11 +38,10 @@ type PrintOptions struct {
 
 // Print renders a diagram inline to w (like cat for diagrams).
 func Print(w io.Writer, d *Diagram, o PrintOptions) error {
-	th, err := theme.Get(o.Theme)
-	if err != nil {
+	if _, err := theme.Get(o.Theme, o.Dark); err != nil {
 		return err
 	}
-	sc, err := parseScene(d.Source, th.Name)
+	sc, err := parseScene(d.Source, o.Theme, o.Dark)
 	if err != nil {
 		return err
 	}
@@ -102,9 +103,10 @@ func Print(w io.Writer, d *Diagram, o PrintOptions) error {
 	}
 }
 
-// Export renders a diagram to a PNG file.
-func Export(path string, d *Diagram, themeName string, scale float64, noShadows bool) error {
-	sc, err := parseScene(d.Source, themeName)
+// Export renders a diagram to a PNG file, in the dark or light variant of
+// the named theme.
+func Export(path string, d *Diagram, themeName string, dark bool, scale float64, noShadows bool) error {
+	sc, err := parseScene(d.Source, themeName, dark)
 	if err != nil {
 		return err
 	}

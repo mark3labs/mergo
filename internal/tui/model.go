@@ -21,7 +21,10 @@ import (
 
 // Options configures the interactive viewer.
 type Options struct {
-	Theme     string
+	Theme string
+	// Dark selects the dark variant of the themes (the terminal has a dark
+	// background).
+	Dark      bool
 	Renderer  Renderer
 	NoShadows bool
 	// Placement selects how kitty images are positioned (auto picks direct
@@ -30,6 +33,8 @@ type Options struct {
 	Placement Placement
 	// Watch enables auto reload when source files change.
 	Watch bool
+	// SaveTheme persists a theme picked in the viewer (optional).
+	SaveTheme func(name string) error
 }
 
 // Messages ------------------------------------------------------------------
@@ -76,6 +81,7 @@ type Model struct {
 
 	themes   []string
 	themeIdx int
+	picker   themePicker
 
 	width, height int
 	cell          CellSize
@@ -117,8 +123,9 @@ type Model struct {
 	keys     keyMap
 	st       styles
 
-	toast   string
-	toastID int
+	toast    string
+	toastErr bool
+	toastID  int
 }
 
 // NewModel creates the viewer model.
@@ -131,7 +138,6 @@ func NewModel(paths []string, diagrams []*Diagram, opts Options) *Model {
 		}
 	}
 	h := help.New()
-	h.Styles = help.DefaultDarkStyles()
 	m := &Model{
 		opts:      opts,
 		paths:     paths,
@@ -150,8 +156,8 @@ func NewModel(paths []string, diagrams []*Diagram, opts Options) *Model {
 		mtimes:    modTimes(paths),
 		help:      h,
 		keys:      defaultKeys(),
-		st:        newStyles(),
 	}
+	m.restyle()
 	switch opts.Renderer {
 	case RendererKitty:
 		m.mode = RendererKitty
@@ -282,14 +288,14 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case reloadMsg:
 		if msg.err != nil {
-			return m, m.showToast("reload failed: " + msg.err.Error())
+			return m, m.showError("reload failed: " + msg.err.Error())
 		}
 		m.applyReload(msg)
 		return m, tea.Batch(m.ensureScene(), m.requestRender())
 
 	case savedMsg:
 		if msg.err != nil {
-			return m, m.showToast("save failed: " + msg.err.Error())
+			return m, m.showError("save failed: " + msg.err.Error())
 		}
 		return m, m.showToast("saved " + msg.path)
 
@@ -300,7 +306,18 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyPressMsg:
+		if m.picker.open {
+			return m, m.handleThemeKey(msg)
+		}
 		return m.handleKey(msg)
+
+	case tea.MouseClickMsg, tea.MouseWheelMsg:
+		if m.picker.open {
+			return m, m.handleThemeMouse(msg)
+		}
+	}
+
+	switch msg := msg.(type) {
 
 	case tea.MouseWheelMsg:
 		return m.handleWheel(msg.Mouse())
@@ -357,8 +374,7 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, k.Prev):
 		return m, m.switchDiagram(-1)
 	case key.Matches(msg, k.Theme):
-		m.themeIdx = (m.themeIdx + 1) % len(m.themes)
-		return m, tea.Batch(m.ensureScene(), m.requestRender(), m.showToast("theme: "+m.themes[m.themeIdx]))
+		return m, m.openThemePicker()
 	case key.Matches(msg, k.Renderer):
 		return m, m.toggleRenderer()
 	case key.Matches(msg, k.Reload):
@@ -433,6 +449,16 @@ func (m *Model) handleWheel(mo tea.Mouse) (tea.Model, tea.Cmd) {
 // state helpers
 
 func (m *Model) themeName() string { return m.themes[m.themeIdx] }
+
+// restyle rebuilds the chrome styles from the active theme's UI palette.
+func (m *Model) restyle() {
+	p, err := theme.Palette(m.themeName(), m.opts.Dark)
+	if err != nil {
+		p, _ = theme.Palette(theme.DefaultName, m.opts.Dark)
+	}
+	m.st = newStyles(p)
+	m.help.Styles = m.st.help
+}
 
 func (m *Model) currentDiagram() *Diagram {
 	if m.current < 0 || m.current >= len(m.diagrams) {
@@ -513,9 +539,9 @@ func (m *Model) ensureScene() tea.Cmd {
 		return nil
 	}
 	m.pending[k] = true
-	src, th := d.Source, k.theme
+	src, th, dark := d.Source, k.theme, m.opts.Dark
 	return func() tea.Msg {
-		sc, err := parseScene(src, th)
+		sc, err := parseScene(src, th, dark)
 		return sceneMsg{key: k, entry: sceneEntry{sc: sc, err: err}}
 	}
 }
@@ -590,7 +616,7 @@ func (m *Model) toggleRenderer() tea.Cmd {
 		return tea.Batch(tea.Raw(clean), m.requestRender(), m.showToast("renderer: half-block"))
 	}
 	if !m.kittyOK {
-		return m.showToast("kitty graphics not supported by this terminal")
+		return m.showError("kitty graphics not supported by this terminal")
 	}
 	m.mode = RendererKitty
 	return tea.Batch(m.requestRender(), m.showToast("renderer: kitty"))
@@ -617,9 +643,14 @@ func (m *Model) hideDirect() tea.Cmd {
 	return tea.Raw(kittyDelete(id, m.tmux))
 }
 
-func (m *Model) showToast(s string) tea.Cmd {
+func (m *Model) showToast(s string) tea.Cmd { return m.toastMsg(s, false) }
+
+// showError shows a toast in the error style.
+func (m *Model) showError(s string) tea.Cmd { return m.toastMsg(s, true) }
+
+func (m *Model) toastMsg(s string, isErr bool) tea.Cmd {
 	m.toastID++
-	m.toast = s
+	m.toast, m.toastErr = s, isErr
 	id := m.toastID
 	return tea.Tick(2500*time.Millisecond, func(time.Time) tea.Msg { return toastExpireMsg{id: id} })
 }
@@ -740,14 +771,25 @@ func (m *Model) render() string {
 			Y(m.bodyTop()+max(rows-bh-1, 0)).Z(2))
 	}
 	if m.toast != "" {
-		t := m.st.toast.Render(m.toast)
+		st := m.st.toast
+		if m.toastErr {
+			st = m.st.toastErr
+		}
+		t := st.Render(m.toast)
 		layers = append(layers, lipgloss.NewLayer(t).X(max(cols-lipgloss.Width(t)-1, 0)).Y(m.bodyTop()+1).Z(3))
 	}
 	if m.showHelp {
-		h := m.st.helpBox.Render(m.help.FullHelpView(m.keys.FullHelp()))
+		h := m.st.helpBox.Render(fillPanel(m.help.FullHelpView(m.keys.FullHelp()), m.st.panelBg))
 		layers = append(layers, lipgloss.NewLayer(h).
 			X(max((cols-lipgloss.Width(h))/2, 0)).
 			Y(m.bodyTop()+max((rows-lipgloss.Height(h))/2, 0)).Z(4))
+	}
+	if m.picker.open {
+		box := m.themePickerView(rows)
+		bw, bh := lipgloss.Width(box), lipgloss.Height(box)
+		x, y := max((cols-bw)/2, 0), m.bodyTop()+max((rows-bh)/2, 0)
+		m.placeThemePicker(x, y, bw, bh)
+		layers = append(layers, lipgloss.NewLayer(box).X(x).Y(y).Z(5))
 	}
 	canvas := lipgloss.NewCanvas(m.width, m.height)
 	return canvas.Compose(lipgloss.NewCompositor(layers...)).Render()
@@ -814,7 +856,7 @@ func (m *Model) statusView() string {
 	var left []string
 	if d := m.currentDiagram(); d != nil {
 		kind := d.Kind()
-		left = append(left, st.pill(colMalibu).Render(kind))
+		left = append(left, st.kindPill.Render(kind))
 		left = append(left, st.statusVal.Render(" "+d.Name()))
 		if len(m.diagrams) > 1 {
 			left = append(left, st.statusKey.Render(fmt.Sprintf("  %d/%d", m.current+1, len(m.diagrams))))
@@ -831,19 +873,19 @@ func (m *Model) statusView() string {
 	if m.probing {
 		mode = "probing"
 	}
-	modeCol := colJulep
+	modePill := st.kittyPill
 	if m.mode == RendererHalfBlock {
-		modeCol = colZest
+		modePill = st.blockPill
 	}
 	right = append(right, st.statusKey.Render("theme ")+st.statusVal.Render(m.themeName()))
-	right = append(right, st.pill(modeCol).Render(mode))
+	right = append(right, modePill.Render(mode))
 	right = append(right, st.statusKey.Render("? help"))
 	l := strings.Join(left, "")
 	r := strings.Join(right, sep) + st.bar.Render(" ")
 	gap := m.width - lipgloss.Width(l) - lipgloss.Width(r)
 	if gap < 1 {
 		// drop the right side progressively when narrow
-		r = st.pill(modeCol).Render(mode)
+		r = modePill.Render(mode)
 		gap = max(m.width-lipgloss.Width(l)-lipgloss.Width(r), 0)
 	}
 	return st.bar.Width(m.width).MaxWidth(m.width).Render(l + st.bar.Render(strings.Repeat(" ", gap)) + r)
@@ -854,7 +896,7 @@ var lineRe = regexp.MustCompile(`(?i)\bline (\d+)`)
 func (m *Model) errorView(err error, cols int) string {
 	st := m.st
 	maxW := max(min(cols-8, 90), 20)
-	msg := lipgloss.NewStyle().Width(maxW).Background(colPepper).Foreground(colAsh).Render(err.Error())
+	msg := st.errMsg.Width(maxW).Render(err.Error())
 	lines := []string{st.errTitle.Render("✗ Diagram error"), "", msg}
 	if d := m.currentDiagram(); d != nil {
 		if mm := lineRe.FindStringSubmatch(err.Error()); mm != nil {
@@ -874,7 +916,7 @@ func (m *Model) errorView(err error, cols int) string {
 	if m.lastGood[m.current] != nil && m.currentErr() != nil {
 		lines = append(lines, "", st.errLineNo.Render("showing last good render"))
 	}
-	return st.errBox.Render(lipgloss.JoinVertical(lipgloss.Left, lines...))
+	return st.errBox.Render(fillPanel(lipgloss.JoinVertical(lipgloss.Left, lines...), st.panelBg))
 }
 
 // ensure the diagram package is linked for Preprocess (used by Kind).

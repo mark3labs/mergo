@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"image/color"
 	"math"
-	"sort"
 	"strconv"
 	"strings"
 )
@@ -84,40 +83,59 @@ type Theme struct {
 	ShadowColor color.RGBA
 }
 
-// Names lists the built-in theme names.
+// Names lists the selectable themes: mergo's own first, then the rest
+// alphabetically. They are the same themes as gopyter's.
 func Names() []string {
-	n := make([]string, 0, len(builtins))
-	for k := range builtins {
-		n = append(n, k)
+	defs := themeDefs()
+	n := make([]string, len(defs))
+	for i, d := range defs {
+		n[i] = d.name
 	}
-	sort.Strings(n)
 	return n
 }
 
-var builtins = map[string]func() *Theme{
+// Valid reports whether name is a selectable theme.
+func Valid(name string) bool {
+	_, ok := lookupDef(name)
+	return ok
+}
+
+// Get returns a fresh copy of the named theme in its dark or light variant.
+func Get(name string, dark bool) (*Theme, error) {
+	p, err := Palette(name, dark)
+	if err != nil {
+		return nil, err
+	}
+	d, _ := lookupDef(name)
+	return fromPalette(d.name, p, dark), nil
+}
+
+// MustGet is like Get but falls back to the default theme.
+func MustGet(name string, dark bool) *Theme {
+	t, err := Get(name, dark)
+	if err != nil {
+		t, _ = Get(DefaultName, dark)
+	}
+	return t
+}
+
+// mermaidThemes are Mermaid's own themes, selectable from a diagram with
+// `%%{init: {"theme": "..."}}%%`.
+var mermaidThemes = map[string]func() *Theme{
 	"default": Default,
 	"dark":    DarkTheme,
 	"forest":  Forest,
 	"neutral": Neutral,
-	"charm":   Charm,
 }
 
-// Get returns a fresh copy of the theme with the given name.
-func Get(name string) (*Theme, error) {
-	f, ok := builtins[strings.ToLower(strings.TrimSpace(name))]
+// Mermaid returns a fresh copy of one of Mermaid's built-in themes
+// (default, dark, forest or neutral), as named by an init directive.
+func Mermaid(name string) (*Theme, error) {
+	f, ok := mermaidThemes[strings.ToLower(strings.TrimSpace(name))]
 	if !ok {
-		return nil, fmt.Errorf("unknown theme %q (available: %s)", name, strings.Join(Names(), ", "))
+		return nil, fmt.Errorf("unknown mermaid theme %q", name)
 	}
 	return f(), nil
-}
-
-// MustGet is like Get but falls back to the default theme.
-func MustGet(name string) *Theme {
-	t, err := Get(name)
-	if err != nil {
-		return Default()
-	}
-	return t
 }
 
 // Clone returns a deep copy of the theme.
@@ -413,65 +431,6 @@ func Neutral() *Theme {
 		ExcludeBkg:    Hex("#f4f4f4"),
 		MilestoneFill: Hex("#444444"),
 		ShadowColor:   RGBA(0, 0, 0, 22),
-	})
-}
-
-// Charm is a dark theme inspired by the Charm color palette.
-func Charm() *Theme {
-	return finish(&Theme{
-		Name:               "charm",
-		ChartPalette:       HexList("#6b50ff", "#ff60ff", "#12c78f", "#00a4ff", "#fe8e66", "#e8fe96", "#ff577d", "#68ffd6", "#ffd65b", "#8b75ff"),
-		Dark:               true,
-		Background:         Hex("#171721"),
-		PrimaryColor:       Hex("#2b2146"),
-		PrimaryTextColor:   Hex("#f1efef"),
-		PrimaryBorderColor: Hex("#9c7cf8"),
-		SecondaryColor:     Hex("#123c3a"),
-		SecondaryTextColor: Hex("#f1efef"),
-		SecondaryBorder:    Hex("#12c78f"),
-		TertiaryColor:      Hex("#3a1e33"),
-		TertiaryTextColor:  Hex("#f1efef"),
-		TertiaryBorder:     Hex("#ff60ff"),
-		TextColor:          Hex("#dfdbdd"),
-		LineColor:          Hex("#bfbcc8"),
-		EdgeLabelBg:        Hex("#2d2c35"),
-		ClusterBkg:         Hex("#201f2b"),
-		ClusterBorder:      Hex("#6b50ff"),
-		TitleColor:         Hex("#ff60ff"),
-		NoteBkg:            Hex("#3b3419"),
-		NoteBorder:         Hex("#e8fe96"),
-		NoteText:           Hex("#fffbe0"),
-		ActorBkg:           Hex("#2b2146"),
-		ActorBorder:        Hex("#9c7cf8"),
-		ActorText:          Hex("#f1efef"),
-		ActorLine:          Hex("#605f6b"),
-		SignalColor:        Hex("#bfbcc8"),
-		SignalText:         Hex("#dfdbdd"),
-		LabelBoxBkg:        Hex("#2b2146"),
-		LabelBoxBorder:     Hex("#9c7cf8"),
-		LabelText:          Hex("#f1efef"),
-		LoopText:           Hex("#dfdbdd"),
-		ActivationBkg:      Hex("#3f3160"),
-		ActivationBorder:   Hex("#9c7cf8"),
-		SequenceNumberBg:   Hex("#ff60ff"),
-		SequenceNumberText: Hex("#171721"),
-		Palette: HexList("#6b50ff", "#ff60ff", "#12c78f", "#00a4ff", "#fe8e66", "#e8fe96",
-			"#ff577d", "#68ffd6", "#ffd65b", "#8b75ff", "#0adcd9", "#ff985a"),
-		TaskBkg:       Hex("#6b50ff"),
-		TaskBorder:    Hex("#9c7cf8"),
-		TaskText:      Hex("#ffffff"),
-		ActiveTask:    Hex("#00a4ff"),
-		ActiveBorder:  Hex("#68ffd6"),
-		DoneTask:      Hex("#4d4c57"),
-		DoneBorder:    Hex("#858392"),
-		CritTask:      Hex("#ff577d"),
-		CritBorder:    Hex("#ffa5b8"),
-		GridColor:     Hex("#3a3943"),
-		TodayLine:     Hex("#ff60ff"),
-		SectionBkg:    HexList("#6b50ff22", "#ffffff00", "#12c78f1c", "#ffffff00"),
-		ExcludeBkg:    Hex("#24232d"),
-		MilestoneFill: Hex("#ff60ff"),
-		ShadowColor:   RGBA(0, 0, 0, 80),
 	})
 }
 

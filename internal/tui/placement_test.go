@@ -68,7 +68,7 @@ func TestKittyPlaceAt(t *testing.T) {
 // replaced/hidden images are deleted.
 func TestDirectPlacementFlow(t *testing.T) {
 	ds := append(parseInput("a.mmd", "graph LR\nA-->B"), parseInput("b.mmd", "graph LR\nA -->")...)
-	m := NewModel([]string{"a.mmd", "b.mmd"}, ds, Options{Theme: "default", Placement: PlacementDirect})
+	m := NewModel([]string{"a.mmd", "b.mmd"}, ds, Options{Theme: "nord", Placement: PlacementDirect})
 	m.cell = CellSize{W: 10, H: 20}
 	m.cellFromTerm = true
 	m.tmux = false

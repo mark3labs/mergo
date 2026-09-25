@@ -140,7 +140,7 @@ func TestExamples(t *testing.T) {
 				_, _ = diagram.Render(s[:i], theme.Default())
 			}()
 		}
-		sc, err := diagram.Render(s, theme.MustGet("dark"))
+		sc, err := diagram.Render(s, theme.DarkTheme())
 		if err != nil {
 			t.Fatalf("%s: %v", f, err)
 		}

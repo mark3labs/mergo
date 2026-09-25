@@ -116,7 +116,7 @@ func TestExamples(t *testing.T) {
 				_, _ = diagram.Render(s[:i], theme.Default())
 			}()
 		}
-		sc, err := diagram.Render(s, theme.MustGet("charm"))
+		sc, err := diagram.Render(s, theme.MustGet(theme.DefaultName, true))
 		if err != nil {
 			t.Fatalf("%s: %v", f, err)
 		}

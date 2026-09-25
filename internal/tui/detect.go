@@ -4,8 +4,36 @@ import (
 	"os"
 	"strings"
 
+	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/term"
 	"golang.org/x/sys/unix"
 )
+
+// DarkBackground asks the terminal whether its background is dark, like
+// gopyter does. Call it before the TUI starts so the query can't race the
+// program's input reader. Without a terminal to ask (or when running in the
+// background, where touching the terminal would stop the process) it
+// assumes dark.
+func DarkBackground() bool {
+	// stdin may carry the diagram and stdout the PNG: talk to the
+	// controlling terminal directly.
+	tty, err := os.OpenFile("/dev/tty", os.O_RDWR, 0)
+	if err != nil {
+		return true
+	}
+	defer func() { _ = tty.Close() }()
+	if !term.IsTerminal(tty.Fd()) || !foreground(tty) {
+		return true
+	}
+	return lipgloss.HasDarkBackground(tty, tty)
+}
+
+// foreground reports whether this process is in the terminal's foreground
+// process group.
+func foreground(tty *os.File) bool {
+	pgrp, err := unix.IoctlGetInt(int(tty.Fd()), unix.TIOCGPGRP)
+	return err == nil && pgrp == unix.Getpgrp()
+}
 
 // Renderer selects how images are shown.
 type Renderer int

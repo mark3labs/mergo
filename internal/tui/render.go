@@ -34,16 +34,13 @@ type sceneEntry struct {
 }
 
 // parseScene parses and lays out a diagram.
-func parseScene(src, themeName string) (sc *scene.Scene, err error) {
+func parseScene(src, themeName string, dark bool) (sc *scene.Scene, err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			err = fmt.Errorf("internal error: %v", r)
 		}
 	}()
-	th, err := theme.Get(themeName)
-	if err != nil {
-		th = theme.Default()
-	}
+	th := theme.MustGet(themeName, dark)
 	return mermaid.Render(src, th)
 }
 

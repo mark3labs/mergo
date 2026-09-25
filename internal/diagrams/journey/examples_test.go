@@ -30,11 +30,11 @@ func TestExamples(t *testing.T) {
 			}()
 		}
 		for _, name := range theme.Names() {
-			sc, err := diagram.Render(s, theme.MustGet(name))
+			sc, err := diagram.Render(s, theme.MustGet(name, true))
 			if err != nil {
 				t.Fatalf("%s (%s): %v", f, name, err)
 			}
-			if testing.Verbose() && name == "default" {
+			if testing.Verbose() && name == theme.DefaultName {
 				t.Logf("%s\n%s", f, devutil.ASCII(sc.Render(scene.RenderOptions{Scale: 1}), 120))
 			}
 		}

@@ -1,5 +1,5 @@
 // Command mmdpng is a small development helper that renders a Mermaid file
-// to PNG without the TUI: mmdpng [-theme name] [-scale 2] in.mmd out.png
+// to PNG without the TUI: mmdpng [-theme name] [-light] [-scale 2] in.mmd out.png
 package main
 
 import (
@@ -13,7 +13,8 @@ import (
 )
 
 func main() {
-	th := flag.String("theme", "default", "theme name")
+	th := flag.String("theme", theme.DefaultName, "theme name")
+	light := flag.Bool("light", false, "use the light variant of the theme")
 	scale := flag.Float64("scale", 2, "render scale")
 	ascii := flag.Int("ascii", 0, "print an ASCII preview with this many columns instead of writing a PNG")
 	flag.Parse()
@@ -23,7 +24,7 @@ func main() {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
-		t, _ := theme.Get(*th)
+		t := theme.MustGet(*th, !*light)
 		img, err := mermaid.RenderImage(string(src), t, 1)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "error:", err)
@@ -33,7 +34,7 @@ func main() {
 		return
 	}
 	if flag.NArg() != 2 {
-		fmt.Fprintln(os.Stderr, "usage: mmdpng [-theme name] [-scale 2] in.mmd out.png")
+		fmt.Fprintln(os.Stderr, "usage: mmdpng [-theme name] [-light] [-scale 2] in.mmd out.png")
 		os.Exit(2)
 	}
 	src, err := os.ReadFile(flag.Arg(0))
@@ -41,7 +42,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-	t, err := theme.Get(*th)
+	t, err := theme.Get(*th, !*light)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
