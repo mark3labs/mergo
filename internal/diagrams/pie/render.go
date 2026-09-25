@@ -2,8 +2,8 @@ package pie
 
 import (
 	"fmt"
-	"image/color"
 	"math"
+	"strconv"
 
 	"github.com/mark3labs/mergo/internal/diagram"
 	"github.com/mark3labs/mergo/internal/scene"
@@ -24,115 +24,100 @@ func Render(src string, cfg *diagram.Config) (*scene.Scene, error) {
 	if err != nil {
 		return nil, err
 	}
-
 	th := cfg.Theme
 	sc := diagram.NewScene(th)
-
-	if len(doc.Slices) == 0 {
-		return sc, nil
+	title := doc.Title
+	if title == "" {
+		title = cfg.Title
 	}
 
-	// Calculate total
 	total := 0.0
 	for _, s := range doc.Slices {
 		if s.Value > 0 {
 			total += s.Value
 		}
 	}
-	if total <= 0 {
-		return sc, nil
+	if len(doc.Slices) == 0 || total <= 0 {
+		sc.Add(scene.NewText(0, 0, "(no data)", diagram.Font(th, 1), th.TextColor, scene.AnchorMiddle, scene.VAlignMiddle))
+		return diagram.Finish(sc, th, title), nil
 	}
 
-	// Get text position from config
-	textPosition := cfg.Float("pie", "textPosition", 0.75)
-
-	// Draw pie chart centered
-	centerX := 150.0
-	centerY := 120.0
-	radius := 80.0
-
-	// Draw slices
-	angle := -math.Pi / 2 // Start at top
-	legendX := centerX + radius + 80
-	legendY := centerY - (float64(len(doc.Slices)) * 20 / 2)
-
-	for i, slice := range doc.Slices {
-		sliceAngle := (slice.Value / total) * 2 * math.Pi
-		endAngle := angle + sliceAngle
-
-		// Draw slice
-		drawPieSlice(sc, centerX, centerY, radius, angle, endAngle, th.PaletteColor(i), th)
-
-		// Draw percentage label inside slice
-		if slice.Value/total > 0.05 { // Only for slices > 5%
-			drawSliceLabel(sc, centerX, centerY, radius, angle, endAngle, slice.Value, total, textPosition, th)
+	textPos := cfg.Float("pie", "textPosition", 0.75)
+	const radius = 170.0
+	cx, cy := radius, radius
+	outline := th.Background
+	if c, ok := cfg.Raw["themeVariables"].(map[string]any); ok {
+		if s, ok := c["pieStrokeColor"].(string); ok {
+			if col, err := theme.ParseColor(s); err == nil {
+				outline = col
+			}
 		}
-
-		// Draw legend
-		drawLegendEntry(sc, legendX, legendY+float64(i)*24, slice.Label, slice.Value, doc.ShowData, i, th)
-
-		angle = endAngle
 	}
 
-	// Draw title if present
-	if doc.Title != "" {
-		titleFont := diagram.BoldFont(th, 1.125)
-		sc.Add(scene.NewText(centerX, centerY-radius-40, doc.Title, titleFont, th.TitleColor, scene.AnchorMiddle, scene.VAlignBottom))
+	// slices
+	angle := -math.Pi / 2
+	labelFont := scene.Font{Size: th.FontSize * 0.95, Bold: true}
+	var labels []scene.Item
+	visible := 0
+	for i, s := range doc.Slices {
+		if s.Value <= 0 {
+			continue
+		}
+		frac := s.Value / total
+		end := angle + frac*2*math.Pi
+		fill := th.PaletteColor(i)
+		p := scene.NewPath(scene.Style{Fill: fill, Stroke: outline, StrokeWidth: 2})
+		if frac >= 0.9999 {
+			p.Circle(cx, cy, radius)
+		} else {
+			p.MoveTo(cx, cy)
+			p.Arc(cx, cy, radius, radius, angle, end, true)
+			p.Close()
+		}
+		sc.Add(p)
+		if frac >= 0.03 {
+			mid := (angle + end) / 2
+			lx := cx + radius*textPos*math.Cos(mid)
+			ly := cy + radius*textPos*math.Sin(mid)
+			if frac >= 0.9999 {
+				lx, ly = cx, cy
+			}
+			txt := formatPercent(frac * 100)
+			labels = append(labels, scene.NewText(lx, ly, txt, labelFont, theme.ContrastText(fill), scene.AnchorMiddle, scene.VAlignMiddle))
+		}
+		angle = end
+		visible++
 	}
+	// subtle outer ring
+	sc.Add(scene.Circle(cx, cy, radius, scene.Style{Stroke: theme.WithAlpha(th.TextColor, 50), StrokeWidth: 1}))
+	sc.Add(labels...)
 
-	sc.Fit(diagram.Pad)
-	return sc, nil
+	// legend
+	legendFont := scene.Font{Size: th.FontSize}
+	lh := 28.0
+	box := 18.0
+	lx := cx + radius + 50
+	ly := cy - float64(len(doc.Slices))*lh/2 + lh/2
+	for i, s := range doc.Slices {
+		y := ly + float64(i)*lh
+		fill := th.PaletteColor(i)
+		sc.Add(scene.RectPath(lx, y-box/2, box, box, 3, scene.Style{Fill: fill, Stroke: theme.WithAlpha(th.TextColor, 90), StrokeWidth: 1}))
+		txt := s.Label
+		if doc.ShowData {
+			txt = fmt.Sprintf("%s [%s]", s.Label, formatNumber(s.Value))
+		}
+		sc.Add(scene.NewText(lx+box+10, y, txt, legendFont, th.TextColor, scene.AnchorStart, scene.VAlignMiddle))
+	}
+	return diagram.Finish(sc, th, title), nil
 }
 
-func drawPieSlice(sc *scene.Scene, cx, cy, r float64, startAngle, endAngle float64, fill color.RGBA, th *theme.Theme) {
-	// Draw a pie slice using a path with arc
-	p := scene.NewPath(scene.Style{
-		Fill:        fill,
-		Stroke:      th.Background,
-		StrokeWidth: 1.5,
-	})
-
-	startX := cx + r*math.Cos(startAngle)
-	startY := cy + r*math.Sin(startAngle)
-
-	p.MoveTo(cx, cy).
-		LineTo(startX, startY).
-		Arc(cx, cy, r, r, startAngle, endAngle, true).
-		LineTo(cx, cy).
-		Close()
-
-	sc.Add(p)
+func formatPercent(p float64) string {
+	if p >= 10 || math.Abs(p-math.Round(p)) < 0.05 {
+		return fmt.Sprintf("%.0f%%", p)
+	}
+	return fmt.Sprintf("%.1f%%", p)
 }
 
-func drawSliceLabel(sc *scene.Scene, cx, cy, r float64, startAngle, endAngle float64, value, total float64, textPosition float64, th *theme.Theme) {
-	// Label position at textPosition radius (0..1)
-	midAngle := (startAngle + endAngle) / 2
-	labelR := r * textPosition
-	labelX := cx + labelR*math.Cos(midAngle)
-	labelY := cy + labelR*math.Sin(midAngle)
-
-	percent := (value / total) * 100
-	label := fmt.Sprintf("%.0f%%", percent)
-
-	font := diagram.Font(th, 0.85)
-	sc.Add(scene.NewText(labelX, labelY, label, font, th.TextColor, scene.AnchorMiddle, scene.VAlignMiddle))
-}
-
-func drawLegendEntry(sc *scene.Scene, x, y float64, label string, value float64, showData bool, index int, th *theme.Theme) {
-	// Draw colored square
-	squareSize := 12.0
-	st := scene.Style{
-		Fill:        th.PaletteColor(index),
-		Stroke:      th.TextColor,
-		StrokeWidth: 0.5,
-	}
-	sc.Add(scene.RectPath(x, y-squareSize/2, squareSize, squareSize, 1, st))
-
-	// Draw text
-	font := diagram.Font(th, 0.9)
-	text := label
-	if showData {
-		text = fmt.Sprintf("%s (%.2g)", label, value)
-	}
-	sc.Add(scene.NewText(x+20, y, text, font, th.TextColor, scene.AnchorStart, scene.VAlignMiddle))
+func formatNumber(v float64) string {
+	return strconv.FormatFloat(v, 'f', -1, 64)
 }
