@@ -27,6 +27,7 @@ type keyMap struct {
 	Theme    key.Binding
 	Renderer key.Binding
 	Save     key.Binding
+	Edit     key.Binding
 	Reload   key.Binding
 	Help     key.Binding
 	Quit     key.Binding
@@ -47,6 +48,7 @@ func defaultKeys() keyMap {
 		Theme:    key.NewBinding(key.WithKeys("t"), key.WithHelp("t", "pick theme")),
 		Renderer: key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "renderer")),
 		Save:     key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "save png")),
+		Edit:     key.NewBinding(key.WithKeys("e"), key.WithHelp("e", "edit source")),
 		Reload:   key.NewBinding(key.WithKeys("R", "ctrl+r"), key.WithHelp("R", "reload")),
 		Help:     key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
 		Quit:     key.NewBinding(key.WithKeys("q", "ctrl+c", "esc"), key.WithHelp("q", "quit")),
@@ -55,7 +57,7 @@ func defaultKeys() keyMap {
 
 // ShortHelp implements help.KeyMap.
 func (k keyMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.ZoomIn, k.ZoomOut, k.Fit, k.Next, k.Theme, k.Help, k.Quit}
+	return []key.Binding{k.ZoomIn, k.ZoomOut, k.Fit, k.Next, k.Theme, k.Edit, k.Help, k.Quit}
 }
 
 // FullHelp implements help.KeyMap.
@@ -64,7 +66,7 @@ func (k keyMap) FullHelp() [][]key.Binding {
 		{k.ZoomIn, k.ZoomOut, k.Fit, k.Actual},
 		{k.Up, k.Down, k.Left, k.Right},
 		{k.Next, k.Prev, k.Theme, k.Renderer},
-		{k.Save, k.Reload, k.Help, k.Quit},
+		{k.Edit, k.Save, k.Reload, k.Help, k.Quit},
 	}
 }
 
@@ -102,6 +104,18 @@ type styles struct {
 	pickCur   lipgloss.Style
 	pickKey   lipgloss.Style
 	pickDim   lipgloss.Style
+
+	// source editor
+	ed       editorStyles
+	edSep    lipgloss.Style
+	edOK     lipgloss.Style
+	edErr    lipgloss.Style
+	edPill   lipgloss.Style
+	edDirty  lipgloss.Style
+	compItem lipgloss.Style
+	compSel  lipgloss.Style
+	compKind lipgloss.Style
+	compSelK lipgloss.Style
 }
 
 func newStyles(p theme.UI) styles {
@@ -163,7 +177,39 @@ func newStyles(p theme.UI) styles {
 		pickCur:   panel.Foreground(p.Primary),
 		pickKey:   helpKey,
 		pickDim:   helpDesc,
+
+		ed:       newEditorStyles(p),
+		edSep:    panel.Foreground(p.Subtle),
+		edOK:     panel.Foreground(p.Success),
+		edErr:    panel.Foreground(p.Error),
+		edPill:   pill(p.Accent),
+		edDirty:  bar.Foreground(p.Warning).Bold(true),
+		compItem: s().Background(p.Faint).Foreground(p.Text),
+		compSel:  s().Background(p.Selection).Foreground(p.Text).Bold(true),
+		compKind: s().Background(p.Faint).Foreground(p.Muted),
+		compSelK: s().Background(p.Selection).Foreground(p.Dim),
 	}
+}
+
+func newEditorStyles(p theme.UI) editorStyles {
+	s := lipgloss.NewStyle
+	fg := func(c color.Color) lipgloss.Style { return s().Foreground(c) }
+	st := editorStyles{
+		bg:      p.Ink,
+		curBg:   p.Faint,
+		text:    fg(p.Text),
+		lineNo:  fg(p.Subtle).Background(p.Ink),
+		lineCur: fg(p.Dim).Background(p.Faint),
+		lineErr: s().Foreground(p.Ink).Background(p.Error).Bold(true),
+	}
+	st.tok[tokText] = fg(p.Text)
+	st.tok[tokKeyword] = fg(p.Keyword).Bold(true)
+	st.tok[tokString] = fg(p.Str)
+	st.tok[tokNumber] = fg(p.Number)
+	st.tok[tokComment] = fg(p.Muted).Italic(true)
+	st.tok[tokArrow] = fg(p.Name)
+	st.tok[tokPunct] = fg(p.Dim)
+	return st
 }
 
 // fillPanel paints content on bg: gaps left by resets inside styled text

@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"image"
 	"image/color"
 	"strings"
@@ -159,17 +160,6 @@ func TestWriteSixelRowRLE(t *testing.T) {
 	}
 }
 
-func TestEraseCells(t *testing.T) {
-	got := eraseCells(1, 10, 2, []image.Rectangle{image.Rect(3, 1, 6, 2)})
-	want := "\x1b7\x1b[0m" +
-		"\x1b[2;1H\x1b[3X\x1b[2;7H\x1b[4X" + // row 1: around the kept cells
-		"\x1b[3;1H\x1b[10X" + // row 2: whole row
-		"\x1b8"
-	if got != want {
-		t.Errorf("\n got %q\nwant %q", got, want)
-	}
-}
-
 func TestSixelDetection(t *testing.T) {
 	if !hasSixel([]int{62, 4, 22}) || hasSixel([]int{62, 22}) {
 		t.Error("hasSixel")
@@ -189,6 +179,7 @@ func TestModelSixel(t *testing.T) {
 	var raws []string
 	var feed func(msg tea.Msg)
 	var exec func(c tea.Cmd)
+	cleared := false
 	exec = func(c tea.Cmd) {
 		if c == nil {
 			return
@@ -200,6 +191,10 @@ func TestModelSixel(t *testing.T) {
 		select {
 		case msg = <-ch:
 		case <-time.After(300 * time.Millisecond):
+			return
+		}
+		if msg == tea.ClearScreen() {
+			cleared = true
 			return
 		}
 		switch v := msg.(type) {
@@ -271,17 +266,29 @@ func TestModelSixel(t *testing.T) {
 		t.Error("image should be complete after closing help")
 	}
 
-	// r cycles sixel -> half-block (kitty isn't available): the image is erased
-	raws = nil
+	// r cycles sixel -> half-block (kitty isn't available): the image is
+	// erased by clearing the screen (repainted by the renderer)
 	feed(tea.KeyPressMsg{Code: 'r', Text: "r"})
 	if m.mode != RendererHalfBlock {
 		t.Fatalf("toggle: mode %v", m.mode)
 	}
-	if len(raws) == 0 || !strings.Contains(raws[0], "\x1b[2;1H\x1b[60X") {
+	if !cleared {
 		t.Error("switching away from sixel should erase the image")
 	}
 	feed(tea.KeyPressMsg{Code: 'r', Text: "r"})
 	if m.mode != RendererSixel {
 		t.Fatalf("toggle back: mode %v", m.mode)
+	}
+
+	// the editor pane moves the preview: the screen is cleared, then the
+	// image is painted right of the pane
+	cleared, raws = false, nil
+	feed(tea.KeyPressMsg{Code: 'e', Text: "e"})
+	if m.edit == nil || !cleared {
+		t.Fatalf("edit: editing=%v cleared=%v", m.edit != nil, cleared)
+	}
+	at := fmt.Sprintf("\x1b7\x1b[2;%dH", m.bodyLeft()+1)
+	if len(raws) == 0 || !strings.HasPrefix(raws[len(raws)-1], at) {
+		t.Errorf("preview should be painted at column %d", m.bodyLeft()+1)
 	}
 }

@@ -58,6 +58,7 @@ type renderJob struct {
 	tmux      bool
 	placement Placement // resolved (unicode or direct)
 	top       int       // screen row of the body (direct placements, sixel)
+	left      int       // screen column of the body
 	// sixel: overlay areas left transparent (image pixels) and their
 	// signature
 	mask []image.Rectangle
@@ -106,7 +107,7 @@ func (j renderJob) run() (res renderResult) {
 		}
 		res.raw = kittyDelete(j.imgID, j.tmux) + kittyTransmit(j.imgID, data, j.tmux)
 		if j.placement == PlacementDirect {
-			res.raw += kittyPlaceAt(j.imgID, j.top, 0, j.cols, j.rows, j.tmux)
+			res.raw += kittyPlaceAt(j.imgID, j.top, j.left, j.cols, j.rows, j.tmux)
 			res.lines = blankGrid(j.cols, j.rows)
 		} else {
 			res.raw += kittyVirtualPlacement(j.imgID, j.cols, j.rows, j.tmux)
@@ -117,7 +118,7 @@ func (j renderJob) run() (res renderResult) {
 		img := j.sc.Render(scene.RenderOptions{Scale: j.cam.zoom, Viewport: vp, NoShadows: j.noShadows})
 		// rounding may add a pixel; never paint past the body
 		img = cropRGBA(img, int(pw), int(ph))
-		res.raw = sixelAt(j.top, 0, encodeSixel(img, j.mask))
+		res.raw = sixelAt(j.top, j.left, encodeSixel(img, j.mask))
 		res.lines = blankGrid(j.cols, j.rows)
 	default:
 		// Half blocks: one cell = 1 x 2 "pixels". A terminal pixel maps to

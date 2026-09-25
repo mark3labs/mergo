@@ -15,6 +15,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	uv "github.com/charmbracelet/ultraviolet"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/mark3labs/mergo/internal/diagram"
 	"github.com/mark3labs/mergo/internal/scene"
@@ -121,6 +122,9 @@ type Model struct {
 	sixelOK    bool
 	sixelSig   string
 	sixelShown bool
+	// sixelCleared is set when the screen was cleared to remove an image:
+	// the next image must wait for the repaint.
+	sixelCleared bool
 
 	cams    map[int]*camera
 	scenes  map[sceneKey]sceneEntry
@@ -148,6 +152,9 @@ type Model struct {
 	toast    string
 	toastErr bool
 	toastID  int
+
+	// edit is the source editor session (nil when not editing).
+	edit *editSession
 }
 
 // NewModel creates the viewer model.
@@ -243,6 +250,7 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if !m.cellFromTerm {
 			m.cell = terminalCellSize()
 		}
+		m.layoutEditor()
 		return m, m.requestRender()
 
 	case uv.CellSizeEvent:
@@ -289,6 +297,7 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.entry.err == nil {
 			m.lastGood[msg.key.diag] = msg.entry.sc
 		}
+		m.editChecked(msg)
 		if msg.key == m.currentKey() {
 			return m, m.requestRender()
 		}
@@ -349,14 +358,27 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			return m, m.showError("reload failed: " + msg.err.Error())
 		}
+		ref := m.editRef()
 		m.applyReload(msg)
-		return m, tea.Batch(m.ensureScene(), m.requestRender())
+		return m, tea.Batch(m.reconcileEdit(ref), m.ensureScene(), m.requestRender())
 
 	case savedMsg:
 		if msg.err != nil {
 			return m, m.showError("save failed: " + msg.err.Error())
 		}
 		return m, m.showToast("saved " + msg.path)
+
+	case editParseMsg:
+		return m, m.editParse(msg)
+
+	case sourceSavedMsg:
+		return m, m.sourceSaved(msg)
+
+	case tea.PasteMsg:
+		if m.edit != nil && !m.picker.open {
+			return m, m.editPaste(msg.Content)
+		}
+		return m, nil
 
 	case toastExpireMsg:
 		if msg.id == m.toastID {
@@ -368,11 +390,18 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.picker.open {
 			return m, m.handleThemeKey(msg)
 		}
+		if m.edit != nil {
+			return m, m.handleEditKey(msg)
+		}
 		return m.handleKey(msg)
 
 	case tea.MouseClickMsg, tea.MouseWheelMsg:
 		if m.picker.open {
 			return m, m.handleThemeMouse(msg)
+		}
+		if m.edit != nil && msg.(tea.MouseMsg).Mouse().X < m.bodyLeft() {
+			m.handleEditMouse(msg)
+			return m, nil
 		}
 	}
 
@@ -383,7 +412,7 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.MouseClickMsg:
 		mo := msg.Mouse()
-		if mo.Button == tea.MouseLeft {
+		if mo.Button == tea.MouseLeft && mo.X >= m.bodyLeft() {
 			m.dragging = true
 			m.dragX, m.dragY = mo.X, mo.Y
 		}
@@ -425,8 +454,10 @@ func (m *Model) finishProbe() {
 // grid of blank cells; if the body showed something else until now, the
 // frame replacing it with blanks must reach the terminal first.
 func (m *Model) applySixel(res renderResult) tea.Cmd {
-	blank := m.bodyMode == RendererSixel && len(m.body) == len(res.lines) &&
+	// after a screen clear, wait for the frame that repaints the screen
+	blank := !m.sixelCleared && m.bodyMode == RendererSixel && len(m.body) == len(res.lines) &&
 		(len(m.body) == 0 || m.body[0] == res.lines[0])
+	m.sixelCleared = false
 	m.body = res.lines
 	m.bodyMode = RendererSixel
 	if blank {
@@ -437,15 +468,18 @@ func (m *Model) applySixel(res renderResult) tea.Cmd {
 	return tea.Tick(sixelSettle, func(time.Time) tea.Msg { return sixelPaintMsg{gen: gen, sig: sig, raw: raw} })
 }
 
-// eraseSixel removes a sixel image from the body (the cell renderer
-// doesn't know about it), sparing the overlays.
+// eraseSixel removes a sixel image (the cell renderer doesn't know about
+// it) by clearing the screen: the renderer erases and repaints everything
+// in one frame. Erasing just the image cells with raw output would race
+// with the renderer: a frame flushed before the erase reaches the terminal
+// would lose the cells it drew there.
 func (m *Model) eraseSixel() tea.Cmd {
 	if !m.sixelShown {
 		return nil
 	}
 	m.sixelShown = false
-	cols, rows := m.bodySize()
-	return tea.Raw(eraseCells(m.bodyTop(), cols, rows, m.overlayRects()))
+	m.sixelCleared = true
+	return tea.ClearScreen
 }
 
 func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
@@ -470,6 +504,8 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, m.forceReload()
 	case key.Matches(msg, k.Save):
 		return m, m.save()
+	case key.Matches(msg, k.Edit):
+		return m, m.startEdit()
 	}
 	if cam == nil {
 		return m, nil
@@ -508,7 +544,7 @@ func (m *Model) handleWheel(mo tea.Mouse) (tea.Model, tea.Cmd) {
 	}
 	pw, ph := m.viewPx()
 	top := m.bodyTop()
-	ax := float64(mo.X*m.cell.W) + float64(m.cell.W)/2
+	ax := float64((mo.X-m.bodyLeft())*m.cell.W) + float64(m.cell.W)/2
 	ay := float64((mo.Y-top)*m.cell.H) + float64(m.cell.H)/2
 	switch mo.Button {
 	case tea.MouseWheelUp:
@@ -561,7 +597,19 @@ func (m *Model) currentKey() sceneKey {
 	if d == nil {
 		return sceneKey{}
 	}
-	return sceneKey{diag: m.current, hash: hashSource(d.Source), theme: m.themeName()}
+	return sceneKey{diag: m.current, hash: hashSource(m.sourceOf(m.current)), theme: m.themeName()}
+}
+
+// sourceOf returns the source of diagram i: the editor buffer while it is
+// being edited.
+func (m *Model) sourceOf(i int) string {
+	if m.edit != nil && m.edit.diag == i {
+		return m.edit.ed.value()
+	}
+	if i < 0 || i >= len(m.diagrams) {
+		return ""
+	}
+	return m.diagrams[i].Source
 }
 
 // currentScene returns the scene to display: the current parse if it
@@ -596,9 +644,19 @@ func (m *Model) cam() *camera {
 // bodyTop is the first screen row of the image area.
 func (m *Model) bodyTop() int { return 1 }
 
+// bodyLeft is the first screen column of the image area (the editor pane
+// is on its left while editing).
+func (m *Model) bodyLeft() int { return m.editPaneWidth() }
+
 // bodySize returns the image area in cells.
 func (m *Model) bodySize() (int, int) {
-	return max(m.width, 0), max(m.height-2, 0)
+	return max(m.width-m.bodyLeft(), 0), max(m.height-2, 0)
+}
+
+// bodyRect is the image area in screen cells.
+func (m *Model) bodyRect() image.Rectangle {
+	cols, rows := m.bodySize()
+	return image.Rect(m.bodyLeft(), m.bodyTop(), m.bodyLeft()+cols, m.bodyTop()+rows)
 }
 
 // viewPx returns the image area in terminal pixels.
@@ -628,7 +686,7 @@ func (m *Model) ensureScene() tea.Cmd {
 		return nil
 	}
 	m.pending[k] = true
-	src, th, dark := d.Source, k.theme, m.opts.Dark
+	src, th, dark := m.sourceOf(m.current), k.theme, m.opts.Dark
 	return func() tea.Msg {
 		sc, err := parseScene(src, th, dark)
 		return sceneMsg{key: k, entry: sceneEntry{sc: sc, err: err}}
@@ -656,13 +714,13 @@ func (m *Model) startRender() tea.Cmd {
 	}
 	sc := m.currentScene()
 	cam := m.cam()
-	if sc == nil || cam == nil {
+	cols, rows := m.bodySize()
+	if sc == nil || cam == nil || cols <= 0 || rows <= 0 {
 		// nothing to show: a direct placement would otherwise linger over
 		// the error panel / placeholder text
 		m.body = nil
 		return tea.Batch(m.hideDirect(), m.eraseSixel())
 	}
-	cols, rows := m.bodySize()
 	pw, ph := viewPixels(cols, rows, m.cell)
 	if !cam.init || cam.fit {
 		cam.Fit(sc.Width, sc.Height, pw, ph)
@@ -680,6 +738,7 @@ func (m *Model) startRender() tea.Cmd {
 		tmux:      m.tmux,
 		placement: m.placement,
 		top:       m.bodyTop(),
+		left:      m.bodyLeft(),
 	}
 	switch m.mode {
 	case RendererKitty:
@@ -687,11 +746,11 @@ func (m *Model) startRender() tea.Cmd {
 	case RendererSixel:
 		job.sig = m.overlaySig()
 		m.sixelSig = job.sig
-		top := m.bodyTop()
+		top, left := m.bodyTop(), m.bodyLeft()
 		for _, r := range m.overlayRects() {
 			job.mask = append(job.mask, image.Rect(
-				r.Min.X*m.cell.W, (r.Min.Y-top)*m.cell.H,
-				r.Max.X*m.cell.W, (r.Max.Y-top)*m.cell.H))
+				(r.Min.X-left)*m.cell.W, (r.Min.Y-top)*m.cell.H,
+				(r.Max.X-left)*m.cell.W, (r.Max.Y-top)*m.cell.H))
 		}
 	}
 	return func() tea.Msg { return renderDoneMsg(job.run()) }
@@ -755,6 +814,9 @@ func (m *Model) hideDirect() tea.Cmd {
 	return tea.Raw(kittyDelete(id, m.tmux))
 }
 
+// toastDuration is how long toasts stay up.
+var toastDuration = 2500 * time.Millisecond
+
 func (m *Model) showToast(s string) tea.Cmd { return m.toastMsg(s, false) }
 
 // showError shows a toast in the error style.
@@ -764,7 +826,7 @@ func (m *Model) toastMsg(s string, isErr bool) tea.Cmd {
 	m.toastID++
 	m.toast, m.toastErr = s, isErr
 	id := m.toastID
-	return tea.Tick(2500*time.Millisecond, func(time.Time) tea.Msg { return toastExpireMsg{id: id} })
+	return tea.Tick(toastDuration, func(time.Time) tea.Msg { return toastExpireMsg{id: id} })
 }
 
 func (m *Model) save() tea.Cmd {
@@ -855,6 +917,7 @@ func (m *Model) View() tea.View {
 	v.AltScreen = true
 	v.MouseMode = tea.MouseModeCellMotion
 	v.WindowTitle = m.windowTitle()
+	v.Cursor = m.editCursor()
 	return v
 }
 
@@ -872,8 +935,13 @@ func (m *Model) render() string {
 	cols, rows := m.bodySize()
 	layers := []*lipgloss.Layer{
 		lipgloss.NewLayer(m.headerView()).X(0).Y(0),
-		lipgloss.NewLayer(m.bodyView(cols, rows)).X(0).Y(m.bodyTop()),
 		lipgloss.NewLayer(m.statusView()).X(0).Y(m.height - 1),
+	}
+	if cols > 0 && rows > 0 {
+		layers = append(layers, lipgloss.NewLayer(m.bodyView(cols, rows)).X(m.bodyLeft()).Y(m.bodyTop()))
+	}
+	if m.edit != nil && rows > 0 {
+		layers = append(layers, lipgloss.NewLayer(m.editorView()).X(0).Y(m.bodyTop()))
 	}
 	for _, o := range m.overlays() {
 		layers = append(layers, lipgloss.NewLayer(o.content).X(o.x).Y(o.y).Z(o.z))
@@ -892,8 +960,10 @@ type overlay struct {
 // toast, help and theme picker.
 func (m *Model) overlays() []overlay {
 	cols, rows := m.bodySize()
+	left := m.bodyLeft()
 	var out []overlay
-	if err := m.displayError(); err != nil {
+	// while editing, syntax errors are reported in the editor pane
+	if err := m.displayError(); err != nil && m.edit == nil {
 		box := m.errorView(err, cols)
 		bh := lipgloss.Height(box)
 		out = append(out, overlay{box, max((cols-lipgloss.Width(box))/2, 0), m.bodyTop() + max(rows-bh-1, 0), 2})
@@ -903,8 +973,11 @@ func (m *Model) overlays() []overlay {
 		if m.toastErr {
 			st = m.st.toastErr
 		}
-		t := st.Render(m.toast)
-		out = append(out, overlay{t, max(cols-lipgloss.Width(t)-1, 0), m.bodyTop() + 1, 3})
+		t := st.Render(ansi.Truncate(m.toast, max(m.width-4, 1), "…"))
+		out = append(out, overlay{t, max(left+cols-lipgloss.Width(t)-1, 0), m.bodyTop() + 1, 3})
+	}
+	if o, ok := m.completionOverlay(); ok {
+		out = append(out, o)
 	}
 	if m.showHelp {
 		h := m.st.helpBox.Render(fillPanel(m.help.FullHelpView(m.keys.FullHelp()), m.st.panelBg))
@@ -925,8 +998,7 @@ func (m *Model) overlays() []overlay {
 // overlayRects returns the screen cells covered by overlays, clipped to
 // the body.
 func (m *Model) overlayRects() []image.Rectangle {
-	cols, rows := m.bodySize()
-	body := image.Rect(0, m.bodyTop(), cols, m.bodyTop()+rows)
+	body := m.bodyRect()
 	var out []image.Rectangle
 	for _, o := range m.overlays() {
 		r := image.Rect(o.x, o.y, o.x+lipgloss.Width(o.content), o.y+lipgloss.Height(o.content)).Intersect(body)
@@ -942,7 +1014,7 @@ func (m *Model) overlayRects() []image.Rectangle {
 func (m *Model) overlaySig() string {
 	cols, rows := m.bodySize()
 	var sb strings.Builder
-	fmt.Fprintf(&sb, "%dx%d", cols, rows)
+	fmt.Fprintf(&sb, "%d+%dx%d", m.bodyLeft(), cols, rows)
 	for _, r := range m.overlayRects() {
 		fmt.Fprintf(&sb, ";%d,%d,%d,%d", r.Min.X, r.Min.Y, r.Max.X, r.Max.Y)
 	}
@@ -1005,6 +1077,9 @@ func (m *Model) headerView() string {
 }
 
 func (m *Model) statusView() string {
+	if m.edit != nil {
+		return m.editStatusView()
+	}
 	st := m.st
 	sep := st.statusDim.Render(" │ ")
 	var left []string
@@ -1055,7 +1130,7 @@ func (m *Model) errorView(err error, cols int) string {
 	if d := m.currentDiagram(); d != nil {
 		if mm := lineRe.FindStringSubmatch(err.Error()); mm != nil {
 			n, _ := strconv.Atoi(mm[1])
-			src := strings.Split(d.Source, "\n")
+			src := strings.Split(m.sourceOf(m.current), "\n")
 			if n >= 1 && n <= len(src) {
 				fileLine := d.Line + n - 1
 				code := strings.TrimRight(src[n-1], " \t")

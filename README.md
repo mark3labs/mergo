@@ -2,9 +2,9 @@
 
 **Beautiful Mermaid diagrams in your terminal.** Real graphics, not ASCII art.
 
-![mergo demo: flipping through diagram types, zooming, and live-previewing themes](docs/demo.gif)
+![mergo demo: flipping through diagram types, zooming, live-previewing themes and editing a diagram](docs/demo.gif)
 
-<sub>Recorded with [VHS](https://github.com/charmbracelet/vhs) ([`docs/demo.tape`](docs/demo.tape)) using the half-block fallback, since VHS's terminal has no kitty graphics; kitty, Ghostty, WezTerm and Konsole show diagrams at full resolution.</sub>
+<sub>Recorded with [VHS](https://github.com/charmbracelet/vhs) ([`docs/demo.tape`](docs/demo.tape)), whose terminal (xterm.js) displays mergo's sixel graphics; kitty, Ghostty, WezTerm and Konsole get the kitty graphics protocol.</sub>
 
 mergo parses [Mermaid](https://mermaid.js.org) diagrams, lays them out and
 rasterizes them **natively in Go** — no browser, no Node.js, no
@@ -38,6 +38,10 @@ Built with the Charm stack: [Bubble Tea v2](https://github.com/charmbracelet/bub
 - **Interactive viewer**: zoom, pan (keys or mouse drag / wheel), fit, switch
   between diagrams, live reload on save, theme picker with live preview,
   export PNG.
+- **Built-in editor**: edit a diagram next to its live preview, with syntax
+  highlighting, validation as you type (the file is only saved when the
+  diagram parses) and keyword / node-name completion. Markdown blocks are
+  written back in place.
 - **Kitty graphics via Unicode placeholders**: the image is transmitted once
   and drawn with placeholder cells, so it cooperates perfectly with Bubble
   Tea's cell renderer (overlays, help, error panels all compose on top).
@@ -105,9 +109,35 @@ mergo themes                      # list themes, marking the active one
 | `t` | theme picker: `↑↓` previews, `enter` applies and saves, `esc` cancels |
 | `r` | toggle kitty / half-block renderer |
 | `s` | save the current diagram as PNG next to its source |
+| `e` | edit the diagram source (see below) |
 | `R` | reload |
 | `?` | help |
 | `q` | quit |
+
+### Editing
+
+`e` opens the source of the current diagram in an editor pane on the left,
+with the preview on the right. The preview follows your edits. While the
+source is invalid, it keeps showing the last good render, the bottom line of
+the pane shows the error and the line number is marked. Saving is refused
+until the error is fixed. Diagrams read from stdin can be edited but not
+saved.
+
+| Key | Action |
+| --- | --- |
+| `ctrl+s` | validate and save (a `.md` file only has its mermaid block replaced) |
+| `esc` | close the editor (press twice to discard unsaved changes) |
+| `ctrl+space` | complete: diagram types, keywords, node / participant names |
+| `tab` | accept a completion (or indent); `enter` too after `ctrl+space` or `↑↓` |
+| `ctrl+z` / `ctrl+y` | undo / redo |
+| `shift+tab` | dedent line |
+| `ctrl+w`, `ctrl+k`, `ctrl+u` | delete word / to end / to start of line |
+| `ctrl+r` | reload from disk (unsaved edits are kept) |
+| mouse click / wheel | move the cursor / scroll |
+
+Completion also pops up by itself as you type. With live reload on,
+changes made to the file elsewhere show up in the editor as long as it has
+no unsaved edits.
 
 ### Settings
 

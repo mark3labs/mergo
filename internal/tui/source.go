@@ -58,6 +58,11 @@ func isMarkdown(p string) bool {
 type Block struct {
 	Line   int // 1-based line of the first source line
 	Source string
+	// Lines is the number of source lines (between the fences).
+	Lines int
+	// Indent is the indentation of the opening fence, removed from the
+	// source lines (CommonMark).
+	Indent int
 }
 
 // ExtractMermaidBlocks returns all ```mermaid (or ~~~mermaid) fenced blocks
@@ -102,7 +107,7 @@ func ExtractMermaidBlocks(md string) []Block {
 			continue
 		}
 		if strings.HasPrefix(trimmed, fence) && strings.TrimSpace(strings.TrimLeft(trimmed, fence[:1])) == "" {
-			out = append(out, Block{Line: start, Source: strings.Join(buf, "\n")})
+			out = append(out, Block{Line: start, Source: strings.Join(buf, "\n"), Lines: len(buf), Indent: indent})
 			in = false
 			continue
 		}
@@ -111,7 +116,7 @@ func ExtractMermaidBlocks(md string) []Block {
 		buf = append(buf, line[rm:])
 	}
 	if in && len(buf) > 0 {
-		out = append(out, Block{Line: start, Source: strings.Join(buf, "\n")})
+		out = append(out, Block{Line: start, Source: strings.Join(buf, "\n"), Lines: len(buf), Indent: indent})
 	}
 	return out
 }
