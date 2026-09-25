@@ -59,6 +59,8 @@ type renderJob struct {
 	noShadows bool
 	imgID     int
 	tmux      bool
+	placement Placement // resolved (unicode or direct)
+	top       int       // screen row of the body (direct placements)
 }
 
 // renderResult is the output of a render job.
@@ -100,10 +102,14 @@ func (j renderJob) run() (res renderResult) {
 			res.err = err
 			return res
 		}
-		res.raw = kittyDelete(j.imgID, j.tmux) +
-			kittyTransmit(j.imgID, data, j.tmux) +
-			kittyVirtualPlacement(j.imgID, j.cols, j.rows, j.tmux)
-		res.lines = placeholderGrid(j.imgID, j.cols, j.rows)
+		res.raw = kittyDelete(j.imgID, j.tmux) + kittyTransmit(j.imgID, data, j.tmux)
+		if j.placement == PlacementDirect {
+			res.raw += kittyPlaceAt(j.imgID, j.top, 0, j.cols, j.rows, j.tmux)
+			res.lines = blankGrid(j.cols, j.rows)
+		} else {
+			res.raw += kittyVirtualPlacement(j.imgID, j.cols, j.rows, j.tmux)
+			res.lines = placeholderGrid(j.imgID, j.cols, j.rows)
+		}
 	default:
 		// Half blocks: one cell = 1 x 2 "pixels". A terminal pixel maps to
 		// 1/cell.W half-block pixels horizontally.

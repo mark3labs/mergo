@@ -24,6 +24,10 @@ type Options struct {
 	Theme     string
 	Renderer  Renderer
 	NoShadows bool
+	// Placement selects how kitty images are positioned (auto picks direct
+	// placements inside zellij and in terminals without Unicode
+	// placeholder support).
+	Placement Placement
 	// Watch enables auto reload when source files change.
 	Watch bool
 }
@@ -85,6 +89,10 @@ type Model struct {
 	idBase   int
 	idCursor int
 	usedIDs  map[int]bool
+	// placement is the resolved kitty placement strategy; shownID is the
+	// image currently displayed with a direct placement (0 = none).
+	placement Placement
+	shownID   int
 
 	cams    map[int]*camera
 	scenes  map[sceneKey]sceneEntry
@@ -125,23 +133,24 @@ func NewModel(paths []string, diagrams []*Diagram, opts Options) *Model {
 	h := help.New()
 	h.Styles = help.DefaultDarkStyles()
 	m := &Model{
-		opts:     opts,
-		paths:    paths,
-		diagrams: diagrams,
-		themes:   names,
-		themeIdx: themeIdx,
-		cell:     terminalCellSize(),
-		tmux:     inTmux(),
-		idBase:   imageIDBase(),
-		usedIDs:  map[int]bool{},
-		cams:     map[int]*camera{},
-		scenes:   map[sceneKey]sceneEntry{},
-		pending:  map[sceneKey]bool{},
-		lastGood: map[int]*scene.Scene{},
-		mtimes:   modTimes(paths),
-		help:     h,
-		keys:     defaultKeys(),
-		st:       newStyles(),
+		opts:      opts,
+		paths:     paths,
+		diagrams:  diagrams,
+		themes:    names,
+		themeIdx:  themeIdx,
+		cell:      terminalCellSize(),
+		tmux:      inTmux() && !inZellij(nil),
+		placement: resolvePlacement(opts.Placement, nil),
+		idBase:    imageIDBase(),
+		usedIDs:   map[int]bool{},
+		cams:      map[int]*camera{},
+		scenes:    map[sceneKey]sceneEntry{},
+		pending:   map[sceneKey]bool{},
+		lastGood:  map[int]*scene.Scene{},
+		mtimes:    modTimes(paths),
+		help:      h,
+		keys:      defaultKeys(),
+		st:        newStyles(),
 	}
 	switch opts.Renderer {
 	case RendererKitty:
@@ -255,8 +264,16 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.body = msg.lines
 		m.bodyMode = msg.mode
-		if msg.raw != "" {
-			return m, tea.Raw(msg.raw)
+		raw := msg.raw
+		if msg.mode == RendererKitty && m.placement == PlacementDirect {
+			// the new image is placed; now drop the previous one
+			if m.shownID != 0 && m.shownID != msg.imgID {
+				raw += kittyDelete(m.shownID, m.tmux)
+			}
+			m.shownID = msg.imgID
+		}
+		if raw != "" {
+			return m, tea.Raw(raw)
 		}
 		return m, nil
 
@@ -525,7 +542,10 @@ func (m *Model) startRender() tea.Cmd {
 	sc := m.currentScene()
 	cam := m.cam()
 	if sc == nil || cam == nil {
-		return nil
+		// nothing to show: a direct placement would otherwise linger over
+		// the error panel / placeholder text
+		m.body = nil
+		return m.hideDirect()
 	}
 	cols, rows := m.bodySize()
 	pw, ph := viewPixels(cols, rows, m.cell)
@@ -543,6 +563,8 @@ func (m *Model) startRender() tea.Cmd {
 		cam:       *cam,
 		noShadows: m.opts.NoShadows,
 		tmux:      m.tmux,
+		placement: m.placement,
+		top:       m.bodyTop(),
 	}
 	if m.mode == RendererKitty {
 		job.imgID = m.nextImageID()
@@ -581,7 +603,18 @@ func (m *Model) cleanup() string {
 		sb.WriteString(kittyDelete(id, m.tmux))
 	}
 	m.usedIDs = map[int]bool{}
+	m.shownID = 0
 	return sb.String()
+}
+
+// hideDirect removes the currently shown direct placement (if any).
+func (m *Model) hideDirect() tea.Cmd {
+	if m.shownID == 0 {
+		return nil
+	}
+	id := m.shownID
+	m.shownID = 0
+	return tea.Raw(kittyDelete(id, m.tmux))
 }
 
 func (m *Model) showToast(s string) tea.Cmd {
@@ -792,6 +825,9 @@ func (m *Model) statusView() string {
 		right = append(right, st.statusKey.Render("zoom ")+st.statusVal.Render(fmt.Sprintf("%d%%", int(cam.zoom*100+0.5))))
 	}
 	mode := m.mode.String()
+	if m.mode == RendererKitty && m.placement == PlacementDirect {
+		mode = "kitty·direct"
+	}
 	if m.probing {
 		mode = "probing"
 	}

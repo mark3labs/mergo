@@ -42,6 +42,87 @@ func (r Renderer) String() string {
 	return "auto"
 }
 
+// Placement selects how kitty images are positioned on screen.
+type Placement int
+
+const (
+	// PlacementAuto picks the best placement for the environment.
+	PlacementAuto Placement = iota
+	// PlacementUnicode uses virtual placements + Unicode placeholder cells
+	// (kitty, Ghostty; tmux with allow-passthrough).
+	PlacementUnicode
+	// PlacementDirect places the image at a cursor position with a=p. Used
+	// for terminals and multiplexers that implement the graphics protocol
+	// but not Unicode placeholders (zellij >= 0.45, WezTerm, Konsole).
+	PlacementDirect
+)
+
+// ParsePlacement parses "auto", "unicode"/"placeholder" or "direct".
+func ParsePlacement(s string) (Placement, bool) {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "", "auto":
+		return PlacementAuto, true
+	case "unicode", "placeholder", "placeholders":
+		return PlacementUnicode, true
+	case "direct":
+		return PlacementDirect, true
+	}
+	return PlacementAuto, false
+}
+
+func (p Placement) String() string {
+	switch p {
+	case PlacementUnicode:
+		return "unicode"
+	case PlacementDirect:
+		return "direct"
+	}
+	return "auto"
+}
+
+// inZellij reports whether we run inside a zellij session.
+func inZellij(env func(string) string) bool {
+	if env == nil {
+		env = os.Getenv
+	}
+	return env("ZELLIJ") != "" || env("ZELLIJ_SESSION_NAME") != ""
+}
+
+// resolvePlacement picks the placement strategy for the environment.
+// zellij implements the kitty protocol itself (no passthrough needed) but
+// does not support Unicode placeholders, and it forwards the outer
+// terminal's environment (e.g. KITTY_WINDOW_ID), so it must be checked
+// first.
+func resolvePlacement(p Placement, env func(string) string) Placement {
+	if p != PlacementAuto {
+		return p
+	}
+	if env == nil {
+		env = os.Getenv
+	}
+	switch {
+	case inZellij(env):
+		return PlacementDirect
+	case env("TMUX") != "":
+		// tmux does not track kitty placements; placeholders are the only
+		// thing that survives redraws (requires allow-passthrough).
+		return PlacementUnicode
+	case kittyHint(env):
+		return PlacementUnicode
+	}
+	return PlacementDirect
+}
+
+// graphicsHint reports whether the environment suggests any terminal that
+// can display kitty graphics (with or without Unicode placeholders).
+func graphicsHint(env func(string) string) bool {
+	if env == nil {
+		env = os.Getenv
+	}
+	prog := strings.ToLower(env("TERM_PROGRAM"))
+	return kittyHint(env) || prog == "wezterm" || env("WEZTERM_EXECUTABLE") != "" || env("KONSOLE_VERSION") != ""
+}
+
 // kittyHint reports whether the environment suggests a terminal that
 // implements the kitty graphics protocol (including Unicode placeholders).
 func kittyHint(env func(string) string) bool {

@@ -213,7 +213,7 @@ func TestParseRenderer(t *testing.T) {
 // without a terminal.
 func TestModelFlow(t *testing.T) {
 	ds := parseInput("x.mmd", "graph LR\nA[Hello] --> B{World}")
-	m := NewModel([]string{"x.mmd"}, ds, Options{Theme: "default"})
+	m := NewModel([]string{"x.mmd"}, ds, Options{Theme: "default", Placement: PlacementUnicode})
 	m.cell = CellSize{W: 10, H: 20}
 	m.cellFromTerm = true
 

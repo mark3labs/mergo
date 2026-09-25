@@ -25,6 +25,7 @@ var version = "dev"
 type flags struct {
 	theme     string
 	renderer  string
+	placement string
 	output    string
 	index     int
 	print     bool
@@ -76,6 +77,7 @@ Inputs can be Mermaid files (.mmd, .mermaid), Markdown files (every
 	fl := cmd.Flags()
 	fl.StringVarP(&f.theme, "theme", "t", "default", "diagram theme ("+strings.Join(theme.Names(), ", ")+")")
 	fl.StringVarP(&f.renderer, "renderer", "r", "auto", "image renderer: auto, kitty or halfblock")
+	fl.StringVar(&f.placement, "kitty-placement", "auto", "kitty image placement: auto, unicode (placeholders) or direct (zellij, WezTerm, Konsole)")
 	fl.StringVarP(&f.output, "output", "o", "", "export the diagram as PNG to this path and exit (- for stdout)")
 	fl.BoolVarP(&f.print, "print", "p", false, "print the diagram inline and exit")
 	fl.IntVarP(&f.index, "index", "i", 1, "which diagram to print/export when the input has several (1-based)")
@@ -91,6 +93,9 @@ Inputs can be Mermaid files (.mmd, .mermaid), Markdown files (every
 	})
 	_ = cmd.RegisterFlagCompletionFunc("renderer", func(*cobra.Command, []string, string) ([]string, cobra.ShellCompDirective) {
 		return []string{"auto", "kitty", "halfblock"}, cobra.ShellCompDirectiveNoFileComp
+	})
+	_ = cmd.RegisterFlagCompletionFunc("kitty-placement", func(*cobra.Command, []string, string) ([]string, cobra.ShellCompDirective) {
+		return []string{"auto", "unicode", "direct"}, cobra.ShellCompDirectiveNoFileComp
 	})
 	cmd.ValidArgsFunction = func(*cobra.Command, []string, string) ([]string, cobra.ShellCompDirective) {
 		return []string{"mmd", "mermaid", "md", "markdown"}, cobra.ShellCompDirectiveFilterFileExt
@@ -127,6 +132,10 @@ func run(ctx context.Context, args []string, f flags) error {
 	rend, ok := tui.ParseRenderer(f.renderer)
 	if !ok {
 		return fmt.Errorf("unknown renderer %q (want auto, kitty or halfblock)", f.renderer)
+	}
+	placement, ok := tui.ParsePlacement(f.placement)
+	if !ok {
+		return fmt.Errorf("unknown kitty placement %q (want auto, unicode or direct)", f.placement)
 	}
 	if f.font != "" || f.fontBold != "" {
 		if err := scene.LoadFonts(f.font, f.fontBold); err != nil {
@@ -174,6 +183,7 @@ func run(ctx context.Context, args []string, f flags) error {
 		Theme:     f.theme,
 		Renderer:  rend,
 		NoShadows: f.noShadows,
+		Placement: placement,
 		Watch:     !f.noWatch,
 	})
 }

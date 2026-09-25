@@ -84,6 +84,32 @@ func kittyVirtualPlacement(id, cols, rows int, tmux bool) string {
 	return kittyGraphics(fmt.Sprintf("a=p,U=1,i=%d,c=%d,r=%d,q=2", id, cols, rows), "", tmux)
 }
 
+// directZ is the z-index for direct placements: below cells with a
+// non-default background (so overlays such as help and error panels cover
+// the image) while still visible under default-background blank cells.
+const directZ = -1073741825
+
+// kittyPlaceAt places image id at the 0-based cell (row, col), scaled into
+// cols x rows cells. The cursor position is saved and restored around the
+// placement and the terminal is told not to move the cursor (C=1), so the
+// sequence doesn't disturb the TUI renderer's idea of the cursor.
+func kittyPlaceAt(id, row, col, cols, rows int, tmux bool) string {
+	return "\x1b7" + fmt.Sprintf("\x1b[%d;%dH", row+1, col+1) +
+		kittyGraphics(fmt.Sprintf("a=p,i=%d,p=1,c=%d,r=%d,C=1,z=%d,q=2", id, cols, rows, directZ), "", tmux) +
+		"\x1b8"
+}
+
+// blankGrid returns rows lines of cols default-background spaces (the body
+// under a direct placement).
+func blankGrid(cols, rows int) []string {
+	line := strings.Repeat(" ", max(cols, 0))
+	out := make([]string, rows)
+	for i := range out {
+		out[i] = line
+	}
+	return out
+}
+
 // kittyDelete deletes an image (and frees its data).
 func kittyDelete(id int, tmux bool) string {
 	return kittyGraphics(fmt.Sprintf("a=d,d=I,i=%d,q=2", id), "", tmux)

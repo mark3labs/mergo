@@ -54,7 +54,7 @@ func Print(w io.Writer, d *Diagram, o PrintOptions) error {
 	cell := terminalCellSize()
 	mode := o.Renderer
 	if mode == RendererAuto {
-		if kittyHint(nil) {
+		if graphicsHint(nil) {
 			mode = RendererKitty
 		} else {
 			mode = RendererHalfBlock
@@ -83,7 +83,7 @@ func Print(w io.Writer, d *Diagram, o PrintOptions) error {
 			return err
 		}
 		id := imageIDBase() + 7
-		_, err = fmt.Fprint(w, kittyTransmitDisplay(id, data, cols, rows, inTmux())+"\n")
+		_, err = fmt.Fprint(w, kittyTransmitDisplay(id, data, cols, rows, inTmux() && !inZellij(nil))+"\n")
 		return err
 	default:
 		// half blocks: cols x rows*2 pixels, supersampled

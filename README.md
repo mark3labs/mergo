@@ -59,6 +59,7 @@ mergo types                       # list diagram types and themes
 | --- | --- |
 | `-t, --theme` | `default`, `dark`, `forest`, `neutral`, `charm` |
 | `-r, --renderer` | `auto` (default), `kitty` or `halfblock` |
+| `--kitty-placement` | `auto` (default), `unicode` (placeholders) or `direct` |
 | `-p, --print` | print inline and exit |
 | `-o, --output` | export PNG (`-` for stdout) |
 | `-i, --index` | which diagram of a multi-diagram input to print/export |
@@ -90,11 +91,31 @@ mergo types                       # list diagram types and themes
 request; if the terminal acknowledges the query, kitty graphics are used,
 otherwise half blocks.
 
+Kitty images are positioned in one of two ways (`--kitty-placement`):
+
+- **unicode** – a virtual placement plus a grid of Unicode placeholder
+  cells. The image is part of the cell grid, so it survives redraws and
+  composes with overlays. Requires kitty or Ghostty.
+- **direct** – the image is placed at the body origin with `a=p`
+  (cursor saved/restored, `C=1`, z-index below non-default backgrounds so
+  help/error overlays still cover it). Used where the protocol is
+  implemented without placeholders.
+
+`auto` picks **direct** inside zellij (checked first, because zellij passes
+the outer terminal's `KITTY_WINDOW_ID`/`TERM` through), **unicode** in
+kitty, Ghostty and tmux, and **direct** everywhere else that answers the
+graphics query.
+
 | Terminal | Renderer |
 | --- | --- |
 | kitty, Ghostty | kitty graphics (Unicode placeholders) |
-| WezTerm, iTerm2, Alacritty, foot, GNOME Terminal, Windows Terminal, … | half blocks |
+| zellij ≥ 0.45 inside a kitty-protocol terminal | kitty graphics (direct placement, no passthrough needed) |
+| WezTerm, Konsole | kitty graphics (direct placement) |
+| iTerm2, Alacritty, foot, GNOME Terminal, Windows Terminal, … | half blocks |
 | tmux | half blocks by default; with `set -g allow-passthrough on` inside kitty/Ghostty use `-r kitty` |
+
+zellij has to be allowed to use the protocol (`support_kitty_graphics_protocol`
+is on by default), and the host terminal must support it.
 
 ## Supported syntax (highlights)
 
