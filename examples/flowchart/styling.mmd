@@ -1,13 +1,11 @@
-flowchart TD
-    A[Regular] --> B[Node]
-    
-    classDef success fill:#90EE90,stroke:#2d5016,color:#000
-    classDef error fill:#FF6B6B,stroke:#8B0000,color:#fff
-    classDef warning fill:#FFD700,stroke:#8B7500,color:#000
-    
-    class A success
-    class B error
-    
-    C[Another]:::warning
-    
-    A --> C
+flowchart LR
+    A[Hard edge] -->|Link text| B(Round edge)
+    B --> C{Decision}
+    C -->|One| D[Result one]
+    C -->|Two| E[Result two]
+    classDef default fill:#f9f9ff,stroke:#6366f1,stroke-width:2px
+    classDef hot fill:#fee2e2,stroke:#ef4444,stroke-width:2px,color:#7f1d1d,font-weight:bold
+    class D hot
+    style E fill:#ecfeff,stroke:#06b6d4,stroke-width:3px,stroke-dasharray: 5 5
+    linkStyle 0 stroke:#ef4444,stroke-width:3px,color:#ef4444
+    linkStyle default stroke:#6366f1

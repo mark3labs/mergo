@@ -1,14 +1,19 @@
-flowchart TD
-    Start([Start]) --> Build[Build Code]
-    Build --> Test{Tests Pass?}
-    Test -->|No| Build
-    Test -->|Yes| Deploy[Deploy]
-    Deploy --> Monitor[Monitor]
-    Monitor --> End([End])
-    
-    style Start fill:#90EE90
-    style Build fill:#87CEEB
-    style Test fill:#FFD700
-    style Deploy fill:#FFA500
-    style Monitor fill:#87CEEB
-    style End fill:#FF6B6B
+---
+title: CI/CD pipeline
+---
+flowchart LR
+    dev([Developer]) -->|git push| repo[(Git repo)]
+    repo --> ci{{CI runner}}
+    subgraph build [Build & Test]
+        direction TB
+        lint[Lint] --> unit[Unit tests] --> img[[Build image]]
+    end
+    ci --> lint
+    img --> scan{Vulnerabilities?}
+    scan -- yes --> fail[/Notify team/]:::bad
+    scan -- no --> reg[(Registry)]
+    reg --> stg[Deploy staging] --> e2e[E2E tests]
+    e2e -->|pass| prod[Deploy production]:::good
+    e2e -.->|fail| fail
+    classDef good fill:#2e7d32,stroke:#1b5e20,color:#fff
+    classDef bad fill:#c62828,stroke:#8e0000,color:#fff

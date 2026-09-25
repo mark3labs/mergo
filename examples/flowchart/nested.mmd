@@ -1,0 +1,19 @@
+flowchart LR
+    client([Client]) --> lb
+    subgraph cloud [Cloud Platform]
+        direction TB
+        lb[Load Balancer]
+        subgraph k8s [Kubernetes Cluster]
+            direction LR
+            api1[API pod 1]
+            api2[API pod 2]
+        end
+        subgraph data [Data tier]
+            pg[(PostgreSQL)]
+            redis[(Redis)]
+        end
+        lb --> api1 & api2
+        api1 & api2 --> pg
+        api1 & api2 -.-> redis
+    end
+    pg == replication ==> replica[(Read replica)]

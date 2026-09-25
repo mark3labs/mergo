@@ -562,3 +562,54 @@ func baselineOffset(f Font, lh float64) float64 {
 	capH := 0.72 * f.Size
 	return lh/2 + capH/2
 }
+
+// Flatten approximates the first sub path of p by a polygon (curves are
+// sampled with n segments each).
+func (p *Path) Flatten(n int) []Point {
+	if n < 1 {
+		n = 8
+	}
+	var out []Point
+	var cur Point
+	started := false
+	for _, op := range p.ops {
+		switch op.kind {
+		case opMove:
+			if started {
+				return out
+			}
+			started = true
+			cur = op.pts[0]
+			out = append(out, cur)
+		case opLine:
+			cur = op.pts[0]
+			out = append(out, cur)
+		case opQuad:
+			c, e := op.pts[0], op.pts[1]
+			for i := 1; i <= n; i++ {
+				t := float64(i) / float64(n)
+				mt := 1 - t
+				out = append(out, Point{
+					mt*mt*cur.X + 2*mt*t*c.X + t*t*e.X,
+					mt*mt*cur.Y + 2*mt*t*c.Y + t*t*e.Y,
+				})
+			}
+			cur = e
+		case opCubic:
+			c1, c2, e := op.pts[0], op.pts[1], op.pts[2]
+			for i := 1; i <= n; i++ {
+				t := float64(i) / float64(n)
+				mt := 1 - t
+				a, b, c, d := mt*mt*mt, 3*mt*mt*t, 3*mt*t*t, t*t*t
+				out = append(out, Point{
+					a*cur.X + b*c1.X + c*c2.X + d*e.X,
+					a*cur.Y + b*c1.Y + c*c2.Y + d*e.Y,
+				})
+			}
+			cur = e
+		case opClose:
+			return out
+		}
+	}
+	return out
+}

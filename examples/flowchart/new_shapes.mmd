@@ -1,0 +1,24 @@
+---
+title: Mermaid v11 shapes
+---
+flowchart TD
+    A@{ shape: doc, label: "Document" } --> B@{ shape: docs, label: "Documents" }
+    B --> C@{ shape: notch-rect, label: "Card" }
+    C --> D@{ shape: delay, label: "Delay" }
+    A --> E@{ shape: h-cyl, label: "Direct access storage" }
+    E --> F@{ shape: lin-cyl, label: "Disk" }
+    F --> G@{ shape: curv-trap, label: "Display" }
+    D --> H@{ shape: div-rect, label: "Divided process" }
+    G --> I@{ shape: tri, label: "Extract" }
+    H --> J@{ shape: win-pane, label: "Internal storage" }
+    I --> K@{ shape: f-circ }
+    J --> K
+    K --> L@{ shape: sl-rect, label: "Manual input" }
+    L --> M@{ shape: st-rect, label: "Stacked processes" }
+    M --> N@{ shape: bow-rect, label: "Stored data" }
+    N --> O@{ shape: flag, label: "Paper tape" }
+    O --> P@{ shape: lin-rect, label: "Lined process" }
+    P --> Q@{ shape: notch-pent, label: "Loop limit" }
+    Q --> R@{ shape: tag-rect, label: "Tagged process" }
+    R --> S@{ shape: fr-circ, label: "Stop" }
+    A --> T@{ shape: brace, label: "A comment" }

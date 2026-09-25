@@ -1,18 +1,15 @@
-flowchart TB
-    Start([User Login]) --> InputCreds["Enter Username<br/>& Password"]
-    InputCreds --> Validate{Credentials<br/>Valid?}
-    
-    Validate -->|Invalid| Error["Show Error"]
-    Error --> InputCreds
-    
-    Validate -->|Valid| Check{2FA<br/>Enabled?}
-    
-    Check -->|No| Session[Create Session]
-    Check -->|Yes| SendOTP[Send OTP]
-    SendOTP --> VerifyOTP[User Enters OTP]
-    VerifyOTP --> CheckOTP{OTP Valid?}
-    CheckOTP -->|No| SendOTP
-    CheckOTP -->|Yes| Session
-    
-    Session --> Dashboard[Redirect to Dashboard]
-    Dashboard --> End([Login Success])
+flowchart TD
+    start((Start)) --> login[/User enters credentials/]
+    login --> valid{Valid?}
+    valid -- No --> attempts{"Attempts < 3?"}
+    attempts -- Yes --> login
+    attempts -- No --> locked[Account locked]:::danger
+    valid -- Yes --> mfa{MFA enabled?}
+    mfa -- Yes --> code[/Enter OTP code/] --> verify{Code OK?}
+    verify -- No --> code
+    verify -- Yes --> session
+    mfa -- No --> session[Create session]
+    session --> done(((Signed in)))
+    locked --> done2((End))
+    classDef danger fill:#fdecea,stroke:#d93025,color:#8c1d18
+    style done fill:#e6f4ea,stroke:#1e8e3e
