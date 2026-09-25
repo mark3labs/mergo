@@ -25,7 +25,7 @@ Built with the Charm stack: [Bubble Tea v2](https://github.com/charmbracelet/bub
   mindmap, gitGraph, timeline, user journey, quadrant chart and XY chart.
 - **Mermaid syntax**: front matter (`title`, `config`), `%%{init: …}%%`
   directives, `themeVariables`, comments, `classDef`/`class`/`style`/`:::`,
-  `linkStyle`, markdown strings, `<br>`, entity codes (`#quot;`, `#9829;`).
+  `linkStyle`, markdown strings with **bold**/*italic*, `<br>`, `<b>`/`<i>`, entity codes (`#quot;`, `#9829;`).
 - **Professional output**: layered (Sugiyama) graph layout with nested
   clusters, spline edges, proper arrowheads, crow's feet, UML markers,
   anti-aliased text, subtle drop shadows.

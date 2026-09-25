@@ -6,6 +6,7 @@ import (
 
 	"github.com/mark3labs/mergo/internal/diagram"
 	_ "github.com/mark3labs/mergo/internal/mermaid"
+	"github.com/mark3labs/mergo/internal/scene"
 	"github.com/mark3labs/mergo/internal/theme"
 )
 
@@ -57,18 +58,37 @@ func TestThemeVariables(t *testing.T) {
 }
 
 func TestCleanLabel(t *testing.T) {
+	// [b] [/b] [i] [/i] stand for the scene style markers
+	mk := strings.NewReplacer("[b]", string(scene.BoldOn), "[/b]", string(scene.BoldOff),
+		"[i]", string(scene.ItalicOn), "[/i]", string(scene.ItalicOff))
 	for in, want := range map[string]string{
-		`"quoted"`:             "quoted",
-		"a<br>b<br/>c":         "a\nb\nc",
-		"#quot;x#quot; #9829;": `"x" ♥`,
-		"fa:fa-car Car":        "Car",
-		"`**md** text`":        "md text",
-		`a\nb`:                 "a\nb",
-		"&lt;tag&gt;":          "<tag>",
+		`"quoted"`:                     "quoted",
+		"a<br>b<br/>c":                 "a\nb\nc",
+		"#quot;x#quot; #9829;":         `"x" ♥`,
+		"fa:fa-car Car":                "Car",
+		"`**md** text`":                "[b]md[/b] text",
+		`a\nb`:                         "a\nb",
+		"&lt;tag&gt;":                  "<tag>",
+		"a<BR >b<br />c":               "a\nb\nc",
+		"<b>bold</b> <I>it</I>":        "[b]bold[/b] [i]it[/i]",
+		"<strong>s</strong><em>e</em>": "[b]s[/b][i]e[/i]",
+		"<span>plain</span>":           "plain",
+		"`*em* and _em_`":              "[i]em[/i] and [i]em[/i]",
+		"`__strong__ x`":               "[b]strong[/b] x",
+		"`***both***`":                 "[b][i]both[/b][/i]",
+		"`snake_case_name`":            "snake_case_name",
+		"`2 * 3 * 4`":                  "2 * 3 * 4",
+		"a * b":                        "a * b",
+		"**not markdown**":             "**not markdown**",
+		"<b> a<br>b </b>":              "[b]a[/b]\n[b]b[/b]",
+		"<b></b>":                      "",
 	} {
-		if got := diagram.CleanLabel(in); got != want {
-			t.Errorf("CleanLabel(%q) = %q, want %q", in, got, want)
+		if got, w := diagram.CleanLabel(in), mk.Replace(want); got != w {
+			t.Errorf("CleanLabel(%q) = %q, want %q", in, got, w)
 		}
+	}
+	if got, want := diagram.CleanInline("a<br>b &amp; <b>c<br>d</b>"), mk.Replace("a b & [b]c[/b] [b]d[/b]"); got != want {
+		t.Errorf("CleanInline = %q, want %q", got, want)
 	}
 }
 

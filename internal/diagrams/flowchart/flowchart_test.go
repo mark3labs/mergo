@@ -96,7 +96,7 @@ func TestQuotedAndSpecialLabels(t *testing.T) {
 	if got := g.Nodes["C"].Label; got != "line1\nline2" {
 		t.Errorf("C label %q", got)
 	}
-	if got := g.Nodes["D"].Label; got != "bold text" {
+	if got := g.Nodes["D"].Label; got != "\ue000bold\ue001 text" {
 		t.Errorf("D label %q", got)
 	}
 	if got := g.Nodes["E"].Label; got != "a (nested) paren" {

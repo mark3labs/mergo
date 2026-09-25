@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/fogleman/gg"
+	"golang.org/x/image/font"
 )
 
 // RenderOptions controls rasterization.
@@ -157,26 +158,35 @@ func drawText(dc *gg.Context, t *Text, tr transform) {
 		return
 	}
 	px := t.Font.Size * tr.scale
-	fc := face(t.Font, px)
 	r := t.blockRect()
 	lh := t.lineHeight()
 	lines := strings.Split(t.S, "\n")
 	widths := make([]float64, len(lines))
+	lineRuns := make([][]textRun, len(lines))
+	faces := map[Font]font.Face{}
 	for i, l := range lines {
 		widths[i] = MeasureText(l, t.Font)
+		lineRuns[i] = runs(l, t.Font)
+		for _, rn := range lineRuns[i] {
+			if _, ok := faces[rn.f]; !ok {
+				faces[rn.f] = face(rn.f, px)
+			}
+		}
+		for j := range lineRuns[i] {
+			lineRuns[i][j].w = MeasureText(lineRuns[i][j].s, lineRuns[i][j].f)
+		}
 	}
 
 	fontMu.Lock()
 	defer fontMu.Unlock()
-	dc.SetFontFace(fc)
 	dc.SetColor(nrgba(t.Color))
 	dc.Push()
 	if t.Rotate != 0 {
 		ox, oy := tr.pt(Point{t.X, t.Y})
 		dc.RotateAbout(gg.Radians(t.Rotate), ox, oy)
 	}
-	for i, line := range lines {
-		if line == "" {
+	for i := range lines {
+		if widths[i] == 0 {
 			continue
 		}
 		lw := widths[i]
@@ -190,8 +200,14 @@ func drawText(dc *gg.Context, t *Text, tr transform) {
 			x = r.X + r.W - lw
 		}
 		baseline := r.Y + float64(i)*lh + baselineOffset(t.Font, lh)
-		bx, by := tr.pt(Point{x, baseline})
-		dc.DrawString(line, bx, by)
+		for _, rn := range lineRuns[i] {
+			if rn.s != "" {
+				dc.SetFontFace(faces[rn.f])
+				bx, by := tr.pt(Point{x, baseline})
+				dc.DrawString(rn.s, bx, by)
+			}
+			x += rn.w
+		}
 	}
 	dc.Pop()
 }

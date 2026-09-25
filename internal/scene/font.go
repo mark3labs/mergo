@@ -139,10 +139,18 @@ func face(f Font, px float64) font.Face {
 
 const measureSize = 64.0
 
-// MeasureText returns the advance width of a single line of text.
+// MeasureText returns the advance width of a single line of text (inline
+// style markers select bold/italic faces for their spans).
 func MeasureText(s string, f Font) float64 {
 	if s == "" || f.Size <= 0 {
 		return 0
+	}
+	if HasStyle(s) {
+		var w float64
+		for _, r := range runs(s, f) {
+			w += MeasureText(r.s, r.f)
+		}
+		return w
 	}
 	fc := face(f, measureSize)
 	fontMu.Lock()
@@ -197,13 +205,22 @@ func WrapText(s string, f Font, maxW float64) string {
 			continue
 		}
 		line := words[0]
+		// style spans may cross wrap points: close them at the end of a
+		// line and re-open them on the next one
+		var st styleState
+		for _, r := range line {
+			st.apply(r)
+		}
 		for _, w := range words[1:] {
 			cand := line + " " + w
 			if MeasureText(cand, f) > maxW {
-				out = append(out, line)
-				line = w
+				out = append(out, line+st.closers())
+				line = st.openers() + w
 			} else {
 				line = cand
+			}
+			for _, r := range w {
+				st.apply(r)
 			}
 		}
 		out = append(out, line)

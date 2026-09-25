@@ -21,7 +21,7 @@ func TestParse(t *testing.T) {
     E one or more optionally to zero or more F : words
     "Quoted Name" ||--|| G : q
     P["Person record"] {
-        string name PK "the name"
+        string name PK "the<br/>name"
         int age
         uuid org_id PK, FK
         list~string~ tags
@@ -54,7 +54,7 @@ func TestParse(t *testing.T) {
 	if p.Label != "Person record" || len(p.Attrs) != 4 || p.Classes[0] != "hot" {
 		t.Fatalf("P = %+v", p)
 	}
-	if a := p.Attrs[0]; a.Name != "name" || a.Keys[0] != "PK" || a.Comment != "the name" {
+	if a := p.Attrs[0]; a.Name != "name" || a.Keys[0] != "PK" || a.Comment != "the\nname" {
 		t.Errorf("attr0 %+v", a)
 	}
 	if a := p.Attrs[2]; len(a.Keys) != 2 || a.Keys[1] != "FK" {

@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"unicode"
 
 	"gopkg.in/yaml.v3"
 
@@ -505,23 +506,81 @@ var (
 	tagRe    = regexp.MustCompile(`</?[a-zA-Z][^>]*>`)
 	entityRe = regexp.MustCompile(`#([a-zA-Z]+|\d+);`)
 	faRe     = regexp.MustCompile(`\bfa[bklrs]?:fa-[\w-]+\s*`)
+	// markdown emphasis inside "`...`" strings: **bold**, __bold__, *em*, _em_
+	mdStrongRe = regexp.MustCompile(`\*\*(\S(?:.*?\S)?)\*\*|__(\S(?:.*?\S)?)__`)
+	mdStarRe   = regexp.MustCompile(`\*(\S(?:[^*]*?\S)?)\*`)
+	mdUnderRe  = regexp.MustCompile(`(^|[^\pL\pN_])_(\S(?:[^_]*?\S)?)_($|[^\pL\pN_])`)
+	// HTML emphasis tags, rendered as bold/italic spans
+	styleTagRe = regexp.MustCompile(`(?i)<(/?)(b|strong|i|em)(?:\s[^>]*)?>`)
 )
+
+var (
+	bOn, bOff = string(scene.BoldOn), string(scene.BoldOff)
+	iOn, iOff = string(scene.ItalicOn), string(scene.ItalicOff)
+)
+
+func styleTag(t string) string {
+	m := styleTagRe.FindStringSubmatch(t)
+	closing := m[1] != ""
+	switch strings.ToLower(m[2]) {
+	case "b", "strong":
+		if closing {
+			return bOff
+		}
+		return bOn
+	default:
+		if closing {
+			return iOff
+		}
+		return iOn
+	}
+}
+
+// trimStyled trims surrounding whitespace, looking through leading and
+// trailing style markers.
+func trimStyled(l string) string {
+	if !scene.HasStyle(l) {
+		return strings.TrimSpace(l)
+	}
+	var pre, post strings.Builder
+	l = strings.TrimLeftFunc(l, func(r rune) bool {
+		if r >= scene.BoldOn && r <= scene.ItalicOff {
+			pre.WriteRune(r)
+			return true
+		}
+		return unicode.IsSpace(r)
+	})
+	var tail []rune
+	l = strings.TrimRightFunc(l, func(r rune) bool {
+		if r >= scene.BoldOn && r <= scene.ItalicOff {
+			tail = append([]rune{r}, tail...)
+			return true
+		}
+		return unicode.IsSpace(r)
+	})
+	post.WriteString(string(tail))
+	return pre.String() + l + post.String()
+}
 
 // CleanLabel normalizes a label: strips surrounding quotes and markdown
 // backticks, turns <br> into newlines, decodes Mermaid (#quot;) and HTML
-// entities, drops other HTML tags and font-awesome icons, and converts the
-// literal sequence "\n" into a newline.
+// entities, drops font-awesome icons and HTML tags, and converts the literal
+// sequence "\n" into a newline. Emphasis (<b>/<strong>, <i>/<em>, and
+// **bold** / *italic* inside markdown strings) becomes scene style markers,
+// normalized so that no span crosses a line break.
 func CleanLabel(s string) string {
-	s = strings.TrimSpace(s)
+	s = scene.StripStyle(strings.TrimSpace(s))
 	if len(s) >= 2 && s[0] == '"' && s[len(s)-1] == '"' {
 		s = s[1 : len(s)-1]
 	}
 	if len(s) >= 2 && s[0] == '`' && s[len(s)-1] == '`' {
 		s = s[1 : len(s)-1]
-		s = strings.ReplaceAll(s, "**", "")
-		s = strings.ReplaceAll(s, "__", "")
+		s = mdStrongRe.ReplaceAllString(s, bOn+"$1$2"+bOff)
+		s = mdStarRe.ReplaceAllString(s, iOn+"$1"+iOff)
+		s = mdUnderRe.ReplaceAllString(s, "$1"+iOn+"$2"+iOff+"$3")
 	}
 	s = brRe.ReplaceAllString(s, "\n")
+	s = styleTagRe.ReplaceAllStringFunc(s, styleTag)
 	s = tagRe.ReplaceAllString(s, "")
 	s = faRe.ReplaceAllString(s, "")
 	s = entityRe.ReplaceAllStringFunc(s, func(e string) string {
@@ -533,12 +592,18 @@ func CleanLabel(s string) string {
 	})
 	s = html.UnescapeString(s)
 	s = strings.ReplaceAll(s, `\n`, "\n")
-	// trim each line
-	lines := strings.Split(s, "\n")
+	// close/re-open spans at line breaks, then trim each line
+	lines := strings.Split(scene.StyleLines(s), "\n")
 	for i := range lines {
-		lines[i] = strings.TrimSpace(lines[i])
+		lines[i] = trimStyled(lines[i])
 	}
 	return strings.Join(lines, "\n")
+}
+
+// CleanInline is CleanLabel for single-line contexts (legends, commit
+// labels): line breaks become spaces.
+func CleanInline(s string) string {
+	return strings.Join(strings.Fields(CleanLabel(s)), " ")
 }
 
 // Lines splits source into trimmed, non-empty lines. Semicolons are NOT

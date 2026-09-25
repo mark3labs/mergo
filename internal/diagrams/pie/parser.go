@@ -3,6 +3,8 @@ package pie
 import (
 	"fmt"
 	"strings"
+
+	"github.com/mark3labs/mergo/internal/diagram"
 )
 
 // Slice represents a pie slice.
@@ -163,7 +165,7 @@ func (p *Parser) parseSlice(line string) bool {
 	valuePart := strings.TrimSpace(line[colonIdx+1:])
 
 	// Extract label (remove quotes if present)
-	label := strings.Trim(labelPart, "\"'")
+	label := diagram.CleanInline(strings.Trim(labelPart, "\"'"))
 	if label == "" {
 		return false
 	}

@@ -210,7 +210,9 @@ func (g *Graph) newCommit(b *Branch, a map[string][]string, t CommitType) *Commi
 		_, _ = fmt.Fprintf(h, "%d-%s", seq, b.Name)
 		c.ID = fmt.Sprintf("%d-%07x", seq, h.Sum32()&0xfffffff)
 	}
-	c.Tags = a["tag"]
+	for _, t := range a["tag"] {
+		c.Tags = append(c.Tags, diagram.CleanInline(t))
+	}
 	if m, ok := a["msg"]; ok {
 		c.Msg = m[0]
 	}

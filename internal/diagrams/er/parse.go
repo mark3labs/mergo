@@ -145,7 +145,7 @@ func Parse(src string) (*Diagram, error) {
 			if m == nil {
 				return nil, fmt.Errorf("line %d: invalid attribute %q (expected 'type name [PK|FK|UK] [\"comment\"]')", ln, line)
 			}
-			a := Attribute{Type: displayType(m[1]), Name: m[2], Comment: m[4]}
+			a := Attribute{Type: displayType(m[1]), Name: m[2], Comment: diagram.CleanLabel(m[4])}
 			a.Keys = append(a.Keys, strings.FieldsFunc(m[3], func(r rune) bool { return r == ',' || r == ' ' })...)
 			cur.Attrs = append(cur.Attrs, a)
 			continue

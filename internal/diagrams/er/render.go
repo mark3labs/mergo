@@ -27,7 +27,7 @@ type table struct {
 	e       *Entity
 	w, h    float64
 	headerH float64
-	rowH    float64
+	rowH    []float64  // per attribute; comments may span several lines
 	cols    [4]float64 // type, name, keys, comment widths
 	style   diagram.NodeStyle
 }
@@ -74,18 +74,23 @@ func (r *renderer) measure(e *Entity) *table {
 	t.style = ns
 	_, nh := scene.MeasureBlock(e.Label, r.bold, 0)
 	t.headerH = nh + 2*9
-	t.rowH = r.font.Size*1.25 + 2*rowPadY
+	t.h = t.headerH
 	for _, a := range e.Attrs {
 		cells := [4]string{a.Type, a.Name, joinKeys(a.Keys), a.Comment}
+		rh := r.font.Size * 1.25
 		for i, c := range cells {
 			f := r.font
 			if i == 2 {
 				f = r.small
 			}
 			if c != "" {
-				t.cols[i] = math.Max(t.cols[i], scene.MeasureText(c, f)+2*cellPadX)
+				cw, ch := scene.MeasureBlock(c, f, 0)
+				t.cols[i] = math.Max(t.cols[i], cw+2*cellPadX)
+				rh = math.Max(rh, ch)
 			}
 		}
+		t.rowH = append(t.rowH, rh+2*rowPadY)
+		t.h += rh + 2*rowPadY
 	}
 	tableW := t.cols[0] + t.cols[1] + t.cols[2] + t.cols[3]
 	t.w = math.Max(math.Max(scene.MeasureText(e.Label, r.bold)+40, tableW), 120)
@@ -93,7 +98,6 @@ func (r *renderer) measure(e *Entity) *table {
 		// distribute extra width to the name column
 		t.cols[1] += t.w - tableW
 	}
-	t.h = t.headerH + float64(len(e.Attrs))*t.rowH
 	if len(e.Attrs) == 0 {
 		t.h = math.Max(t.headerH+14, 50)
 		t.headerH = t.h
@@ -208,11 +212,11 @@ func (r *renderer) drawTable(sc *scene.Scene, id string) {
 		}
 		last := i == len(t.e.Attrs)-1
 		if last {
-			p := roundedBottom(x, ry, t.w, t.rowH, 4)
+			p := roundedBottom(x, ry, t.w, t.rowH[i], 4)
 			p.Style = scene.Style{Fill: fill}
 			sc.Add(p)
 		} else {
-			sc.Add(scene.RectPath(x, ry, t.w, t.rowH, 0, scene.Style{Fill: fill}))
+			sc.Add(scene.RectPath(x, ry, t.w, t.rowH[i], 0, scene.Style{Fill: fill}))
 		}
 		cx := x
 		cells := [4]string{a.Type, a.Name, joinKeys(a.Keys), a.Comment}
@@ -227,11 +231,11 @@ func (r *renderer) drawTable(sc *scene.Scene, id string) {
 				if ci == 3 {
 					ff.Italic = true
 				}
-				sc.Add(scene.NewText(cx+cellPadX, ry+t.rowH/2, c, ff, col, scene.AnchorStart, scene.VAlignMiddle))
+				sc.Add(scene.NewText(cx+cellPadX, ry+t.rowH[i]/2, c, ff, col, scene.AnchorStart, scene.VAlignMiddle))
 			}
 			cx += t.cols[ci]
 		}
-		ry += t.rowH
+		ry += t.rowH[i]
 	}
 	// grid lines
 	grid := scene.Style{Stroke: theme.WithAlpha(st.Stroke, 110), StrokeWidth: 1}

@@ -25,6 +25,19 @@ func TestParseSimplePie(t *testing.T) {
 	}
 }
 
+func TestParseLabelMarkup(t *testing.T) {
+	doc, err := Parse("pie\n\"Salt<br>&amp; Pepper\" : 1\n\"#quot;Q#quot;\" : 2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := doc.Slices[0].Label; got != "Salt & Pepper" {
+		t.Errorf("label0 = %q", got)
+	}
+	if got := doc.Slices[1].Label; got != `"Q"` {
+		t.Errorf("label1 = %q", got)
+	}
+}
+
 func TestParseShowData(t *testing.T) {
 	src := `pie showData
 	"A" : 10
